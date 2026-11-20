@@ -3,6 +3,7 @@ name = "planetary-max"
 main = "src/worker.ts"
 compatibility_date = "2024-03-20"
 compatibility_flags = ["nodejs_compat"]
+account_id = "fe06954221138c750c8c231d2053556f"
 
 [assets]
 directory = "./dist"
@@ -21,16 +22,17 @@ BASE_CHAIN_ID = "8453"
 BASE_USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 PUBLIC_MAX_INTERNET_FREE = "true"
 WALLET_MODE_DEFAULT = "opt-in"
+MAX_COMPUTE_VALUE = "0.000000"
 RELEASE_ANCHOR_ID = "3c8ee1c4-79b8-4bfd-be18-430679f452f2"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "planetary-max-db"
-database_id = "cb3feb4d-3cf4-4126-b495-ff4095fe3f97"
+database_id = "8dc780d1-6606-42e1-99d5-fb21b35d712e"
 
 [[kv_namespaces]]
 binding = "KV_BINDING"
-id = "9c1c8f836dca4d829de41e393e38fa0a"
+id = "aaf0344c9d834adc95b20245928a6fac"
 
 [[ratelimits]]
 name = "ADMIN_LOGIN_LIMITER"
