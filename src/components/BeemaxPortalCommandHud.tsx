@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import './BeemaxPortalCommandHud.css';
+import BeemaxOperatorResearchPanel from './BeemaxOperatorResearchPanel';
 
 type ScopeKey = 'BEEMAX' | 'MAX-ECOSYSTEM' | 'MAX-INSTITUTE' | 'MAX-MEDIA' | 'MAX-SPORTS' | 'MAX-CHESS' | 'MAX-SPACES' | 'Instant Digital Space' | 'MAX-COMPUTE' | 'P2P-COMPUTE' | 'MAX-FINANCE' | 'MAX-SOVEREIGN';
 interface InternetFeedItem {
@@ -38,7 +39,7 @@ export const BeemaxPortalCommandHud: React.FC = () => {
   const [scratchpad, setScratchpad] = useState('');
   const [logLines, setLogLines] = useState<string[]>([
     '[BEEMAX-PORTAL-OS1] Wallet-free mode active. Public MAX-INTERNET access is free.',
-    '[LEDGER] Base USDC bookkeeping only; R2, Stripe, and Bitcoin excluded.',
+    '[LEDGER] Base Mainnet (8453) native USDC requires explicit opt-in. MAX Compute: 0.000000.',
   ]);
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -58,7 +59,7 @@ export const BeemaxPortalCommandHud: React.FC = () => {
     }
   };
 
-  useEffect(() => { void loadInternetFeeds('ALL'); }, []);
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -74,8 +75,13 @@ export const BeemaxPortalCommandHud: React.FC = () => {
     setHistory(previous => [trimmed, ...previous.slice(0, 49)]);
     setHistoryIdx(-1);
     const lower = trimmed.toLowerCase();
+    if (lower.startsWith('/research ') && trimmed.slice(10).trim()) {
+      appendLog(`Research requested: ${trimmed.slice(10).trim()}. Loading configured sources; automated synthesis is unavailable in this view.`);
+      void loadInternetFeeds();
+      return;
+    }
     if (lower === '/clear') { setLogLines([]); return; }
-    if (lower === '/help') { appendLog('Commands: /scope <name> | /gateway <1-7> | /space instant | /media | /state | /clear'); return; }
+    if (lower === '/help') { appendLog('Commands: /research <prompt> | /scope <name> | /gateway <1-7> | /space instant | /media | /state | /clear'); return; }
     if (lower === '/state') { appendLog(`STATE -> scope=${scope} | gateway="${gateway}" | walletMode=${walletOptInRequested ? 'opt-in-ready' : 'wallet-free'} | stream=${activeStream || 'none'}`); return; }
     if (lower === '/media') { setScope('MAX-MEDIA'); appendLog('Switched to MAX-MEDIA stream stage.'); return; }
     if (lower === '/space instant') { setScope('Instant Digital Space'); appendLog('Opened Instant Digital Space view.'); return; }
@@ -109,18 +115,19 @@ export const BeemaxPortalCommandHud: React.FC = () => {
   return (
     <section aria-label="BEEMAX-PORTAL-OS1 Command HUD">
       <header>
-        <a href="/">✳ BEEMAX-PORTAL-OS1</a><span>PUBLIC · FREE BROWSING</span><a href="/#/admin">Operator sign-in</a>
-        <h1>MAX-INTERNET Gateway</h1>
+        <a href="/">✳ BEEMAX-PORTAL-OS1</a><span>PRIVATE · VERIFIED OPERATOR SESSION</span><a href="/#/admin">Operator sign-in</a>
+        <h1>Private Portal-OS1 BEEMAX AI</h1><p>MAX Compute: <strong>0.000000</strong> • Internet sources load only on request. Use /research followed by your prompt.</p>
         <p>Active Scope: <strong>{scope}</strong> | Wallet Mode: <strong>{walletOptInRequested ? 'Opt-In Requested' : 'Wallet-Free Default'}</strong></p>
         <button type="button" onClick={() => setWalletOptInRequested(value => !value)}>{walletOptInRequested ? 'Return to Wallet-Free Mode' : 'Opt-In Wallet (When Ready)'}</button>
       </header>
+      <BeemaxOperatorResearchPanel />
       <nav aria-label="Portal Scopes">{SCOPES.map(item => <button key={item} type="button" onClick={() => setScope(item)}>{item}</button>)}</nav>
       <section><h2>Release Anchor &amp; Cover Asset</h2><p>The Crown of Return (<code>{RELEASE_ID}</code>) — 30.00 USDC — 500 editions</p><img src="/assets/crown-cover.png" alt="The Crown of Return Cover" width={160} height={220} /></section>
       <section><h2>MAX-INSTITUTE Gateways (G1–G7)</h2><select value={gateway} onChange={event => setGateway(event.target.value)}>{GATEWAYS.map(item => <option key={item}>{item}</option>)}</select></section>
-      <section><h2>HLS Live Stream Stage</h2><label>HTTPS stream URL <input type="url" placeholder="https://example.com/live/stream.m3u8" value={streamInput} onChange={event => setStreamInput(event.target.value)} /></label><button type="button" onClick={() => {
+      <section><h2>MAX-SPORTS Video HUD</h2><label>HTTPS stream URL <input type="url" placeholder="https://example.com/live/stream.m3u8" value={streamInput} onChange={event => setStreamInput(event.target.value)} /></label><button type="button" onClick={() => {
         try { const parsed = new URL(streamInput.trim()); if (parsed.protocol !== 'https:') throw new Error(); setActiveStream(parsed.href); appendLog(`Attached stream: ${parsed.href}`); }
         catch { setActiveStream(''); appendLog('Enter a valid HTTPS stream URL.'); }
-      }}>Attach Stream</button><video ref={videoRef} controls playsInline width={480} height={270} /></section>
+      }}>Attach Stream</button><video poster="/assets/crown-cover.png" ref={videoRef} controls playsInline width={480} height={270} /></section>
       <section>
         <h2>Internet Feeds (Private HUD Reader)</h2>
         <label>Feed scope <select value={feedFilter} onChange={event => { setFeedFilter(event.target.value); void loadInternetFeeds(event.target.value); }}>

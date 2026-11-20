@@ -15,7 +15,6 @@ const MODULES: Record<
     title: string;
     mode: string;
     summary: string;
-    hasVideoSlot?: boolean;
   }
 > = {
   "max-spaces": {
@@ -27,11 +26,10 @@ const MODULES: Record<
   },
   "max-sports": {
     tab: "MAX-SPORTS",
-    title: "MAX-SPORTS Output & Video HUD",
+    title: "MAX-SPORTS Output",
     mode: "FREE PREVIEW / OPT-IN USDC",
     summary:
       "Free usage within limit at 0.000000 MAX Compute; staked wagers or P2P require explicit Base (8453) USDC opt-in.",
-    hasVideoSlot: true,
   },
   "max-chess": {
     tab: "MAX-CHESS",
@@ -45,7 +43,7 @@ const MODULES: Record<
     title: "MAX-ART Output",
     mode: "OUTPUT-ONLY PREVIEW",
     summary:
-      "Visual art output preview backed by /assets/crown-cover.png (image/png); zero R2, Stripe, or Bitcoin.",
+      "Visual art output preview backed by /assets/crown-cover.png (image/png).",
   },
   "max-games": {
     tab: "MAX-GAMES",
@@ -231,22 +229,7 @@ export const BeemaxUnifiedOutputHub: React.FC = () => {
             : "Select Opt In to BEEMAX (Base 8453) to use the 1.000000 USDC tier"}
         </p>
 
-        {current.hasVideoSlot && (
-          <div style={{ marginTop: 12 }}>
-            <video
-              controls
-              playsInline
-              poster="/assets/crown-cover.png"
-              style={{
-                width: "100%",
-                maxHeight: 260,
-                borderRadius: 8,
-                border: "1px solid #1e293b",
-                background: "#020617",
-              }}
-            />
-          </div>
-        )}
+
       </div>
     </section>
   );

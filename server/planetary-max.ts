@@ -379,6 +379,10 @@ app.post('/api/admin/login', async (c) => {
     return c.json({ success: true });
   } catch { return c.json({ error: 'Login process failed' }, 400); }
 });
+app.get('/api/auth/command-session', async (c, next) => {
+  if (!dashboardPassword(c.env)) return c.json({ authenticated: false }, 503);
+  return requireAdmin(c, next);
+}, c => c.json({ authenticated: true }));
 app.use('/api/admin/*', requireAdmin);
 app.get('/api/admin/session', (c) => c.json({ authenticated: true }));
 app.post('/api/admin/logout', async (c) => {
