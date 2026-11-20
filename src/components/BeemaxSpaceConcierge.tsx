@@ -1,13 +1,14 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react';
-import { BASE_CHAIN_ID, BASE_NATIVE_USDC, MAX_COMPUTE_VALUE, requestOptInUsdcQuote, verifyOptInUsdcSettlement, type OptInUsdcSettlementRequest } from '../lib/beemaxBaseVerifier';
+import { BASE_CHAIN_ID, BASE_NATIVE_USDC, MAX_COMPUTE_VALUE, requestOptInUsdcQuote, recordOptInOrder, verifyOptInUsdcSettlement, type OptInUsdcSettlementRequest } from '../lib/beemaxBaseVerifier';
 
+import { HUB_MODULES, findHubModule, type HubModule, type HubModuleId } from '../shared/hubModules';
 import { baseUsdcSettlementMessage } from '../shared/baseUsdcSettlementMessage';
 const ChessArena = React.lazy(() => import('../modules/chess/ChessArenaView'));
-export type SpaceActionId = 'sports-wager' | 'sports-predictions' | 'max-chess' | 'research-output' | 'art-media-games-store' | 'max-sovereign-options';
+export type SpaceActionId = 'sports-wager' | 'sports-predictions' | 'max-chess' | 'research-output' | 'art-media-games-store' | 'max-sovereign-options' | HubModuleId;
 export interface SpaceRouteSpec {
   id: SpaceActionId;
   label: string;
-  domain: 'MAX-SPORTS' | 'MAX-CHESS' | 'MAX-SPACES' | 'MAX-ART' | 'MAX-MEDIA' | 'MAX-GAMES';
+  domain: OptInUsdcSettlementRequest['domain'];
   requiresOptInUsdc: boolean;
   freeAllowanceNote: string;
   guidance: string;
@@ -15,6 +16,7 @@ export interface SpaceRouteSpec {
 }
 const PAYMENT_NOTE = 'Base Mainnet (8453) native USDC (0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913), https://mainnet.base.org. Each payment or wallet signature requires explicit approval. No automatic charges.';
 export const SPACE_ROUTES: Record<SpaceActionId, SpaceRouteSpec> = {
+  ...Object.fromEntries(HUB_MODULES.map(module => [module.id, { id: module.id, label: module.title, domain: module.domain, requiresOptInUsdc: false, freeAllowanceNote: 'Free output preview. Paid tiers require explicit opt-in.', guidance: module.summary, targetRoute: `#/spaces/${module.id}` }])) as Record<HubModuleId, SpaceRouteSpec>,
   'sports-wager': {
     id: 'sports-wager', label: 'Place Sports Outcome Stake / Wager', domain: 'MAX-SPORTS', requiresOptInUsdc: true,
     freeAllowanceNote: 'Free telemetry and previews before limits; staking requires explicit Base (8453) USDC opt-in.',
@@ -54,11 +56,77 @@ const panel: React.CSSProperties = { background: '#0e1525', border: '1px solid #
 const control: React.CSSProperties = { background: '#132238', color: '#e2e8f0', border: '1px solid #475569', borderRadius: 8, padding: '8px 12px', cursor: 'pointer', fontSize: 12 };
 const readDestination = () => Object.values(SPACE_ROUTES).find(spec => spec.targetRoute === window.location.hash);
 
+function ModuleOutputView({ moduleId }: { moduleId: HubModuleId }) {
+  const [output, setOutput] = useState<HubModule>();
+  const [error, setError] = useState('');
+  useEffect(() => {
+    const controller = new AbortController();
+    setOutput(undefined); setError('');
+    let tenant: string;
+    try {
+      const key = 'beemax-preview-tenant';
+      const saved = sessionStorage.getItem(key);
+      tenant = saved && /^[a-zA-Z0-9_-]{2,64}$/.test(saved) && !/operator_namespace/i.test(saved) ? saved : crypto.randomUUID();
+      sessionStorage.setItem(key, tenant);
+    } catch { tenant = crypto.randomUUID(); }
+    fetch(`/api/tenant/${encodeURIComponent(tenant)}/modules/${moduleId}`, { signal: controller.signal, cache: 'no-store' })
+      .then(async response => {
+        if (!response.ok) throw new Error('Module preview is unavailable.');
+        const data = await response.json() as { module: HubModule };
+        if (data.module?.id !== moduleId) throw new Error('Module preview is unavailable.');
+        setOutput(data.module);
+      })
+      .catch(err => { if (!controller.signal.aborted) setError(err instanceof Error ? err.message : 'Module preview is unavailable.'); });
+    return () => controller.abort();
+  }, [moduleId]);
+  return <div aria-label={`${moduleId} output preview`}><h4>Public output preview</h4>
+    {error ? <p role="alert">{error}</p> : output ? <p>{output.summary}</p> : <p>Loading preview…</p>}
+    <p>Free preview • No wallet required • MAX Compute: 0.000000</p>
+  </div>;
+}
+
 function SettlementControls({ domain, mode }: {
   domain: OptInUsdcSettlementRequest['domain'];
   mode: OptInUsdcSettlementRequest['mode'];
 }) {
   const [amount, setAmount] = useState('1.000000');
+  const [quote, setQuote] = useState<Awaited<ReturnType<typeof requestOptInUsdcQuote>>>();
+  const [orderId, setOrderId] = useState<string>();
+  const [intakeKey] = useState(() => crypto.randomUUID());
+  const [sent, setSent] = useState(false);
+  const params = () => ({domain, mode, amountUsdc: amount.split('.')[0] + '.' + (amount.split('.')[1] || '').padEnd(6, '0'), optedIn:true as const});
+  const walletAction = async (action:'pay'|'sign'|'record') => {
+    if (pending.current) return;
+    pending.current=true; setBusy(true); setStatus('');
+    try {
+      if(action==='record') {
+        const order=await recordOptInOrder({...params(),idempotencyKey:intakeKey});
+        setOrderId(order.orderId);setStatus('Order recorded internally. No payment verified or sent.');return;
+      }
+      const wallet=(window as unknown as {ethereum?:{request:(args:{method:string;params?:unknown[]})=>Promise<unknown>}}).ethereum;
+      if(!wallet)throw new Error('Open this page with a compatible Ethereum wallet. Wallet-free recording remains available.');
+      const accounts=await wallet.request({method:'eth_requestAccounts'}) as string[];
+      const payer=accounts[0];
+      if(!/^0x[0-9a-f]{40}$/i.test(payer || ''))throw new Error('Wallet account unavailable');
+      if(action==='pay') {
+        if(sent || txHash || !quote?.payment)throw new Error('Request a payment quote first, or verify the existing transaction.');
+        const chain=await wallet.request({method:'eth_chainId'});
+        if(chain!=='0x2105')throw new Error('Select Base Mainnet (8453) in your wallet before paying.');
+        const hash=await wallet.request({method:'eth_sendTransaction',params:[{chainId:'0x2105',from:payer,to:quote.payment.to,data:quote.payment.data,value:quote.payment.value}]});
+        if(typeof hash!=='string' || !/^0x[0-9a-f]{64}$/i.test(hash))throw new Error('Wallet did not return a transaction hash. Check wallet activity before retrying.');
+        setTxHash(hash);setPayerAddress(payer);setSent(true);setSignature('');
+        setStatus('Transaction submitted. Wait for confirmation, then sign proof and verify. Do not pay again.');
+      } else {
+        if(!/^0x[0-9a-f]{64}$/i.test(txHash))throw new Error('Enter a transaction hash first.');
+        const message=baseUsdcSettlementMessage(window.location.origin,{...params(),txHash,payerAddress:payer});
+        const hex='0x'+Array.from(new TextEncoder().encode(message),byte=>byte.toString(16).padStart(2,'0')).join('');
+        const proof=await wallet.request({method:'personal_sign',params:[hex,payer]});
+        if(typeof proof!=='string')throw new Error('Wallet signature unavailable');
+        setPayerAddress(payer);setSignature(proof);setStatus('Proof signed. Submit receipt verification when ready.');
+      }
+    } catch(error){setStatus(error instanceof Error?error.message:'Wallet request rejected');}
+    finally {pending.current=false;setBusy(false);}
+  };
   const [txHash, setTxHash] = useState('');
   const [payerAddress, setPayerAddress] = useState('');
   const [signature, setSignature] = useState('');
@@ -81,11 +149,11 @@ function SettlementControls({ domain, mode }: {
     try {
       const params = { domain, mode, amountUsdc: amount.split('.')[0] + '.' + (amount.split('.')[1] || '').padEnd(6, '0'), optedIn: true as const };
       if (verify) {
-        const response: unknown = await verifyOptInUsdcSettlement({ ...params, payerAddress, signature: signature as `0x${string}`, txHash: txHash as `0x${string}` });
+        const response: unknown = await verifyOptInUsdcSettlement({ ...params, ...(orderId ? {orderId,idempotencyKey:intakeKey} : {}), payerAddress, signature: signature as `0x${string}`, txHash: txHash as `0x${string}` });
         const verified = typeof response === 'object' && response !== null && 'verified' in response && response.verified === true;
-        setStatus(verified ? 'The server reports this receipt as verified. This does not confirm an order, match or wager was created.' : 'The server has not confirmed this receipt as verified.');
+        setStatus(verified ? 'Payment verified and recorded in the internal ledger. Delivery remains locked; no match or wager was executed.' : 'The server has not confirmed this receipt as verified.');
       } else {
-        await requestOptInUsdcQuote(params);
+        setQuote(await requestOptInUsdcQuote(params));
         setStatus('Quote request completed. No payment, order or wager was initiated.');
       }
     } catch {
@@ -99,17 +167,21 @@ function SettlementControls({ domain, mode }: {
     <h4>Opt-in Base USDC • {mode}</h4>
     <p>{domain} • Base Mainnet ({BASE_CHAIN_ID}) • MAX Compute: {MAX_COMPUTE_VALUE}</p>
     <p style={{ overflowWrap: 'anywhere' }}>Native USDC: {BASE_NATIVE_USDC}</p>
-    <p>Request a quote or check an existing receipt. These controls do not sign or send wallet transactions.</p>
+    <p>Record an order without a wallet, or explicitly pay native USDC on Base. Each wallet payment and proof signature requires your approval. Network gas fees may apply.</p>
+    <button style={control} disabled={busy || !!orderId || !!txHash} onClick={()=>void walletAction('record')}>Record order without payment</button>
+    {quote && <p>{quote.payment ? `Pay ${quote.amountUsdc} USDC to ${quote.payment.recipient} on Base (8453).` : 'Payment destination is not set up yet. Wallet-free order recording remains available.'}</p>}
+    <button style={control} disabled={busy || !quote?.payment || !!txHash || sent} onClick={()=>void walletAction('pay')}>Pay quoted USDC with wallet</button>
     <form onSubmit={event => { event.preventDefault(); void submit(false); }}>
       <fieldset disabled={busy} style={{ border: 0, padding: 0 }}>
-        <label>USDC amount <input required inputMode="decimal" value={amount} onChange={event => { setAmount(event.target.value); setStatus(''); }} /></label>
+        <label>USDC amount <input required disabled={!!orderId || !!txHash || sent} inputMode="decimal" value={amount} onChange={event => { setAmount(event.target.value); setQuote(undefined); setStatus(''); }} /></label>
         <button style={control} type="submit">Request Base USDC quote</button>
       </fieldset>
     </form>
     <form onSubmit={event => { event.preventDefault(); void submit(true); }}>
       <fieldset disabled={busy} style={{ border: 0, padding: 0, marginTop: 12 }}>
-        <label>Existing transaction hash <input required value={txHash} onChange={event => { setTxHash(event.target.value); setStatus(''); }} /></label>
+        <label>Existing transaction hash <input disabled={sent} required value={txHash} onChange={event => { setTxHash(event.target.value); setStatus(''); }} /></label>
         <label>Payer wallet address <input required pattern="0x[a-fA-F0-9]{40}" value={payerAddress} onChange={event => { setPayerAddress(event.target.value); setSignature(''); setStatus(''); }} /></label>
+        <button type="button" style={control} onClick={()=>void walletAction('sign')}>Sign receipt proof with wallet</button>
         <p>Explicitly sign this message in your wallet only when ready:</p>
         <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{baseUsdcSettlementMessage(window.location.origin, { domain, mode, amountUsdc: /^(0|[1-9]\d*)(\.\d{1,6})?$/.test(amount) ? amount.split('.')[0] + '.' + (amount.split('.')[1] || '').padEnd(6, '0') : amount, txHash, payerAddress })}</pre>
         <label>Payer proof signature <input required pattern="0x[a-fA-F0-9]{130}" value={signature} onChange={event => setSignature(event.target.value)} /></label>
@@ -121,12 +193,12 @@ function SettlementControls({ domain, mode }: {
 }
 
 export const BeemaxSpaceConcierge: React.FC<BeemaxSpaceConciergeProps> = ({ optedInBaseUsdc, onNavigate }) => {
-  const [selectedAction, setSelectedAction] = useState<SpaceActionId>('sports-predictions');
+  const [selectedAction, setSelectedAction] = useState<SpaceActionId>(() => readDestination()?.id || 'sports-predictions');
   const [destination, setDestination] = useState(readDestination);
   const [request, setRequest] = useState('');
   const [notice, setNotice] = useState('');
   useEffect(() => {
-    const update = () => { setDestination(readDestination()); setNotice(''); };
+    const update = () => { const route = readDestination(); setDestination(route); if (route) setSelectedAction(route.id); setNotice(''); };
     window.addEventListener('hashchange', update);
     return () => window.removeEventListener('hashchange', update);
   }, []);
@@ -150,7 +222,8 @@ export const BeemaxSpaceConcierge: React.FC<BeemaxSpaceConciergeProps> = ({ opte
     </div>
     {destination && <section aria-label="Selected MAX space" style={panel}>
       <h3>{destination.label}</h3>
-      {destination.id === 'max-chess' ? <Suspense fallback={<p>Opening free chess…</p>}><ChessArena /></Suspense>
+      {findHubModule(destination.id) ? <ModuleOutputView key={destination.id} moduleId={destination.id as HubModuleId}/>
+        : destination.id === 'max-chess' ? <Suspense fallback={<p>Opening free chess…</p>}><ChessArena /></Suspense>
         : destination.id === 'art-media-games-store' ? <><img src="/assets/crown-cover.png" alt="The Crown of Return gallery preview" style={{ maxWidth: '100%', width: 320 }} /><p>Free MAX-ART / MAX-MEDIA / MAX-GAMES gallery preview.</p><button style={{ ...control, opacity: optedInBaseUsdc ? 1 : 0.5 }} disabled={!optedInBaseUsdc} onClick={() => setNotice('Use the opt-in controls below to request a quote or verify an existing receipt. No order has been created.')}>Request storefront order</button></>
         : destination.id === 'max-sovereign-options' ? <><p>Free output preview: 0.000000 USDC. MAX Compute: 0.000000.</p><p>Extended outputs, stakes and P2P settlements require explicit consent. {PAYMENT_NOTE}</p></>
         : destination.id === 'sports-wager' ? <><p>{optedInBaseUsdc ? 'Opt-in recorded for this page session. You can request a stake quote or verify an existing receipt below; no wager has been placed.' : 'Opt in to Base (8453) USDC before placing a stake. Free sports previews remain available.'}</p><p>{PAYMENT_NOTE}</p><a href="#/spaces/max-sports?mode=prediction-output">Open free sports output preview</a></>

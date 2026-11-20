@@ -1,10 +1,11 @@
+import { findHubModule } from './shared/hubModules';
 import { handleBaseUsdcQuoteRoute, handleBaseUsdcVerifyRoute } from '../server/baseUsdcSettlement';
 import { DurableObject } from 'cloudflare:workers';
 import app, { AdminSessionDO, BEEMAXSecureNodeRegistryDO, NodeRegistryDO } from '../server/planetary-max';
 
 interface Env {
   RPC_URL?: string;
-  SETTLEMENT_RECIPIENT_ADDRESS: string;
+  SETTLEMENT_RECIPIENT_ADDRESS?: string;
   ASSETS: Fetcher;
   DB: D1Database;
   KV_BINDING?: KVNamespace;
@@ -115,10 +116,15 @@ export class TenantBeemaxDO extends DurableObject<Env> {
     ); CREATE INDEX IF NOT EXISTS idx_tenant_ledger_bucket ON tenant_ledger (tenant_id,bucket,status);`);
   }
   async fetch(request: Request): Promise<Response> {
-    this.ensureSchema();
     const url = new URL(request.url);
     const id = request.headers.get('x-tenant-id') || '';
     if (!tenantId(id)) return json({ ok: false, error: 'Invalid tenant.' }, 403);
+    if (url.pathname.startsWith('/modules/')) {
+      if (request.method !== 'GET') return json({ ok: false, error: 'Method not allowed.' }, 405);
+      const module = findHubModule(url.pathname.slice('/modules/'.length));
+      return module ? json({ ok: true, tenant_id: id, module, max_compute: '0.000000' }) : json({ ok: false, error: 'Module not found.' }, 404);
+    }
+    this.ensureSchema();
     if (url.pathname === '/state' && request.method === 'GET') {
       const rows = this.ctx.storage.sql.exec('SELECT entry_id,bucket,amount_usdc,status,reinvest_target,ref_id,updated_at FROM tenant_ledger WHERE tenant_id=? ORDER BY updated_at DESC LIMIT 100', id).toArray();
       return json({ ok: true, tenant_id: id, chain_id: BASE_CHAIN_ID, usdc_address: BASE_USDC, entries: rows, financial_note: 'Ledger entries are bookkeeping records, not verified transfers or balances.' });
@@ -159,20 +165,20 @@ export default {
     if (url.pathname === '/api/portal/feeds' && request.method === 'GET') return json({ ok: true, ...fallback, source: 'local_seed_fallback' });
     if (url.pathname === '/api/internet-feeds' && request.method === 'GET') return internetFeeds(request, env);
 
-    const namespace = url.searchParams.get('namespace') || request.headers.get('x-target-namespace') || '';
-    if (namespace && forbiddenNamespace(namespace, env.OPERATOR_NAMESPACE)) return json({ ok: false, error: 'Forbidden: OPERATOR_NAMESPACE cannot be accessed through tenant router.' }, 403);
-    if (url.pathname === '/api/settlements/base-usdc/quote') return handleBaseUsdcQuoteRoute(request);
-    if (url.pathname === '/api/settlements/base-usdc/verify') return handleBaseUsdcVerifyRoute(request, env);
-    const match = url.pathname.match(/^\/api\/tenant\/([^/]+)\/(state|ledger)$/);
+    const namespaces = [url.searchParams.get('namespace'), request.headers.get('x-target-namespace')];
+    if (namespaces.some(namespace => namespace && forbiddenNamespace(namespace, env.OPERATOR_NAMESPACE))) return json({ ok: false, error: 'Forbidden: OPERATOR_NAMESPACE cannot be accessed through tenant router.' }, 403);
+    if (url.pathname === '/api/settlements/base-usdc/quote') return handleBaseUsdcQuoteRoute(request, env);
+    if (['/api/settlements/base-usdc/verify', '/api/settlements/base-usdc/intake'].includes(url.pathname)) return handleBaseUsdcVerifyRoute(request, env);
+    const match = url.pathname.match(/^\/api\/tenant\/([^/]+)\/(state|ledger|modules\/[a-z0-9-]+)$/);
     if (match) {
       let decoded = '';
       try { decoded = decodeURIComponent(match[1]); } catch { return json({ ok: false, error: 'Invalid tenant ID.' }, 403); }
       const id = tenantId(decoded);
-      if (!id) return json({ ok: false, error: 'Invalid tenant ID.' }, 403);
+      if (!id || forbiddenNamespace(id, env.OPERATOR_NAMESPACE)) return json({ ok: false, error: 'Invalid tenant ID.' }, 403);
       if (request.method === 'POST' && request.headers.get('origin') && request.headers.get('origin') !== url.origin) return json({ ok: false, error: 'Cross-origin writes are not allowed.' }, 403);
       const stub = env.TENANT_BEEMAX_DO.get(env.TENANT_BEEMAX_DO.idFromName(`tenant:${id}`));
       const headers = new Headers(request.headers); headers.set('x-tenant-id', id); headers.delete('x-target-namespace');
-      const path = match[2] === 'state' ? '/state' : '/ledger';
+      const path = `/${match[2]}`;
       return stub.fetch(new Request(`https://tenant-beemax.internal${path}`, { method: request.method, headers, body: request.method === 'POST' ? await request.text() : undefined }));
     }
     return app.fetch(request, env, ctx);
