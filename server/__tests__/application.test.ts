@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite');
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { applyProductionMigrations } from './migration-fixture';
 import { sign } from 'hono/jwt';
 import app from '../planetary-max';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -35,7 +36,7 @@ async function request(path: string, method = 'GET', body?: unknown, role?: stri
 }
 beforeEach(() => {
   sqlite = new DatabaseSync(':memory:'); sqlite.exec('PRAGMA foreign_keys = ON');
-  for (const name of readdirSync('migrations').filter(n=>n.endsWith('.sql')).sort()) sqlite.exec(readFileSync(`migrations/${name}`, 'utf8'));
+  applyProductionMigrations(sqlite);
 });
 afterEach(() => { sqlite.close(); vi.restoreAllMocks(); });
 
@@ -75,12 +76,25 @@ describe('release application boundaries', () => {
   it('preserves edited seed works and existing reservations during catalog migration', () => {
     const db=new DatabaseSync(':memory:');
     try {
-      for(const name of readdirSync('migrations').filter(n=>n.endsWith('.sql')&&n<'0016').sort())db.exec(readFileSync(`migrations/${name}`,'utf8'));
+      applyProductionMigrations(db, '0016');
       db.exec("UPDATE artworks SET price_cents=12345 WHERE id='art_001'; INSERT INTO marketplace_orders (id,artwork_id,buyer_id,amount_cents) VALUES ('existing-order','art_002','artist_2',2400)");
       db.exec(readFileSync('migrations/0016_catalog_release.sql','utf8'));
+      db.exec(readFileSync('migrations/0029_hide_original_demo_artworks.sql','utf8'));
       expect(db.prepare("SELECT is_demo FROM artworks WHERE id='art_001'").get()?.is_demo).toBe(0);
       expect(db.prepare("SELECT is_demo FROM artworks WHERE id='art_002'").get()?.is_demo).toBe(0);
       expect(db.prepare("SELECT is_demo FROM artworks WHERE id='art_004'").get()?.is_demo).toBe(1);
+    } finally { db.close(); }
+  });
+  it('preserves a purchased seed artwork when applying the follow-up cleanup', () => {
+    const db = new DatabaseSync(':memory:');
+    try {
+      applyProductionMigrations(db, '0016');
+      db.exec("INSERT INTO transactions(artwork_id,buyer_email,tx_reference,created_at) VALUES ('art_004','buyer@test.local','receipt',1)");
+      db.exec(readFileSync('migrations/0016_catalog_release.sql','utf8'));
+      db.exec(readFileSync('migrations/0029_hide_original_demo_artworks.sql','utf8'));
+      expect(db.prepare("SELECT is_demo FROM artworks WHERE id='art_004'").get()?.is_demo).toBe(0);
+      expect(db.prepare("SELECT is_demo FROM artworks WHERE id='art_001'").get()?.is_demo).toBe(1);
+      expect(db.prepare('SELECT COUNT(*) AS total FROM artworks').get()?.total).toBe(4);
     } finally { db.close(); }
   });
   it('requires admin authorization for publishing and registry access', async () => {
@@ -110,7 +124,7 @@ describe('release application boundaries', () => {
     const listed = await (await request('/api/admin/nodes','GET',undefined,'admin')).json(); expect(listed.nodes[0].status).toBe('ACTIVE'); expect(listed.nodes[0].public_key_b64).toBeUndefined();
     expect((await request('/api/admin/nodes/test-node/revoke','POST',{},'admin')).status).toBe(200);
     expect(sqlite.prepare("SELECT status FROM trusted_nodes WHERE node_id='test-node'").get()?.status).toBe('REVOKED');
-    expect(sqlite.prepare('SELECT COUNT(*) AS total FROM beemax_ledger_events').get()?.total).toBe(2);
+    expect(sqlite.prepare("SELECT COUNT(*) AS total FROM beemax_ledger_events WHERE entity_type='node' AND entity_id='test-node' AND action IN ('ENROLLED','REVOKED')").get()?.total).toBe(2);
   });
   it('accepts signed node heartbeats and rejects replays', async () => {
     const key = await crypto.subtle.generateKey('Ed25519',true,['sign','verify']) as CryptoKeyPair;

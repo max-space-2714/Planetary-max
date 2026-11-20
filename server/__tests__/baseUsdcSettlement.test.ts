@@ -51,7 +51,7 @@ it('records matching proof atomically with migration-defined columns and keeps o
   const res=await verify(req(input()),env());expect(res.status).toBe(200);expect(await res.json()).toMatchObject({verified:true,delivery_status:'locked'});
   expect(db.prepare('SELECT tenant_id,price_usdc,delivery_status FROM output_orders').get()).toMatchObject({tenant_id:wallet.address.toLowerCase(),price_usdc:'1.000000',delivery_status:'locked'});
   expect(db.prepare('SELECT amount_usdc,from_address FROM settlement_events').get()).toMatchObject({amount_usdc:'1.000000',from_address:wallet.address.toLowerCase()});
-  expect((await verify(req(input()),env())).status).toBe(409);expect(db.prepare('SELECT count(*) n FROM output_orders').get()?.n).toBe(1);
+  expect(await (await verify(req(input()),env())).json()).toMatchObject({verified:true,duplicate:true});expect(db.prepare('SELECT count(*) n FROM output_orders').get()?.n).toBe(1);
 });
 it('rejects wrong chain, missing/reverted/unconfirmed receipts and mismatched logs without writes',async()=>{
   const original=structuredClone(receipt);
@@ -140,7 +140,7 @@ it('accepts a signed Base USDC receipt for a new hub module without replay', asy
   body.signature = await wallet.signMessage({message:baseUsdcSettlementMessage('https://max.test',body)});
   expect(await (await verify(req(body),env())).json()).toMatchObject({ok:true,verified:true});
   expect(db.prepare('SELECT accounting_bucket,amount_usdc FROM settlement_events').get()).toMatchObject({accounting_bucket:'treasury',amount_usdc:'5.000000'});
-  expect((await verify(req(body),env())).status).toBe(409);
+  expect(await (await verify(req(body),env())).json()).toMatchObject({verified:true,duplicate:true});
 });
 
 it('records ICV opt-ins idempotently in the selected D1 bucket', async () => {
@@ -162,4 +162,26 @@ it('enforces catalog price, tier and allocation before recording or verifying',a
  expect((await verify(req(body),env())).status).toBe(200);
  expect(db.prepare('SELECT tier_code,output_slug FROM output_orders').get()).toMatchObject({tier_code:'tier_std_5',output_slug:'sports_standard_research_brief'});
  expect((await quote(new Request('https://max.test/api/settlements/base-usdc/quote?namespace=public&namespace=OPERATOR_NAMESPACE',{method:'POST',headers:{Origin:'https://max.test'},body:JSON.stringify(body)}),env())).status).toBe(403);
+});
+
+it('recovers original signed receipt IDs after destination changes without another RPC call',async()=>{
+ const first=await (await verify(req(input()),env())).json();
+ const e=env();e.SETTLEMENT_RECIPIENT_ADDRESS='';
+ db.prepare("INSERT INTO treasury_destination(id,destination) VALUES (1,'deferred')").run();
+ requests=[];
+ expect(await (await verify(req(input()),e)).json()).toMatchObject({verified:true,orderId:first.orderId,eventId:first.eventId,duplicate:true});
+ expect(requests).toEqual([]);
+ const other={...input(),domain:'MAX-ART'};
+ other.signature=await wallet.signMessage({message:baseUsdcSettlementMessage('https://max.test',other)});
+ expect((await verify(req(other),e)).status).toBe(409);
+});
+it('recovers attachment and intake retries with the same IDs and verified outcome',async()=>{
+ const body={optedIn:true,domain:'MAX-SPORTS',mode:'wager',amountUsdc:'1',idempotencyKey:crypto.randomUUID()};
+ const first=await (await verify(req(body),env())).json();
+ const proof={...input(),orderId:first.orderId,idempotencyKey:body.idempotencyKey};
+ const verified=await (await verify(req(proof),env())).json();
+ expect(verified).toMatchObject({verified:true,orderId:first.orderId,eventId:first.eventId});
+ expect(await (await verify(req(proof),env())).json()).toMatchObject({verified:true,orderId:first.orderId,eventId:first.eventId});
+ expect(await (await verify(req(body),env())).json()).toMatchObject({verified:true,orderId:first.orderId,eventId:first.eventId});
+ expect(db.prepare('SELECT count(*) n FROM settlement_events').get()?.n).toBe(1);
 });

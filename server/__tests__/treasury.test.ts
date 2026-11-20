@@ -21,7 +21,7 @@ it('returns exact totals and records only bounded treasury releases with immutab
  expect((await request('/releases',release)).status).toBe(409);
  expect((await request('/destination',{destination:'later-wallet'})).status).toBe(200);
  expect((await request('/releases',release)).status).toBe(200);
- expect((await request('/releases',release)).status).toBe(409);
+ expect(await (await request('/releases',release)).json()).toMatchObject({recorded:true,duplicate:true});
  expect((await request('/releases',{...release,reference:'s'.repeat(16)})).status).toBe(409);
  expect((await request('/destination',{destination:'new-wallet'})).status).toBe(200);
  expect(db.prepare('SELECT destination FROM treasury_releases').get()?.destination).toBe('later-wallet');
@@ -53,4 +53,39 @@ it('serializes competing releases through the revision check',async()=>{
  await request('/destination',{destination:'wallet'});
  const responses=await Promise.all(['a','b'].map(c=>request('/releases',{amountUsdc:'2',reference:c.repeat(16)})));
  expect(responses.map(r=>r.status).sort()).toEqual([200,409]);
+});
+
+it('recovers the original release after depletion and destination changes and rejects changed payloads',async()=>{
+ await request('/destination',{destination:'original'});
+ const body={amountUsdc:'2.000001',reference:crypto.randomUUID(),destination:'original'};
+ const first=await (await request('/releases',body)).json();
+ await request('/destination',{destination:'replacement'});
+ expect(await (await request('/releases',body)).json()).toMatchObject({releaseId:first.releaseId,duplicate:true,release:{destination:'original'}});
+ expect((await request('/releases',{...body,amountUsdc:'1'})).status).toBe(409);
+ expect((await request('/releases',{...body,destination:'replacement'})).status).toBe(409);
+ expect(db.prepare('SELECT count(*) n FROM treasury_releases').get()?.n).toBe(1);
+});
+it('does not redirect a new release when its destination changed before submission',async()=>{
+ await request('/destination',{destination:'new'});
+ expect((await request('/releases',{amountUsdc:'1',reference:crypto.randomUUID(),destination:'old'})).status).toBe(409);
+ expect(db.prepare('SELECT count(*) n FROM treasury_releases').get()?.n).toBe(0);
+});
+it('sums release rows beyond int64 without overflow or precision loss',async()=>{
+ for(let i=0;i<1100;i++) {
+   db.prepare("INSERT INTO artwork_funding VALUES (?,?)").run('large'+i,'999999999999.999999');
+   db.prepare("INSERT INTO treasury_releases(release_id,amount_atomic,destination,reference) VALUES (?,?,?,?)")
+     .run('large'+i,Number.MAX_SAFE_INTEGER,'wallet','large'+i);
+ }
+ const response=await request(); expect(response.status).toBe(200);
+ const expected=1100n*999999999999999999n-1100n*BigInt(Number.MAX_SAFE_INTEGER)+2000001n;
+ const {formatAtomicToUsdc}=await import('../verify-base-usdc');
+ expect(await response.json()).toMatchObject({totals:{treasury:formatAtomicToUsdc(expected)}});
+});
+
+it('keeps a verified receipt larger than the intake limit available without overflowing',async()=>{
+ db.prepare('INSERT INTO artwork_funding VALUES (?,?)').run('large-receipt','100000000000000000000.123456');
+ const result=await request(); expect(result.status).toBe(200);
+ expect(await result.json()).toMatchObject({totals:{treasury:'100000000000000000002.123457'}});
+ await request('/destination',{destination:'wallet'});
+ expect((await request('/releases',{amountUsdc:'1',reference:'large_funded_release'})).status).toBe(200);
 });

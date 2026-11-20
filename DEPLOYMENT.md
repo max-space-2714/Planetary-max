@@ -107,7 +107,15 @@ Apply the new additive D1 migration after inspecting the target account:
 npx wrangler d1 migrations apply planetary-max-db --remote --config ./wrangler.toml
 ```
 
-Root configuration includes `AI` (Workers AI) and `BEEMAX_LIMITER`, in addition to the existing administrator-session binding. BEEMAX uses the owner's Workers AI account and requires no model key in browser code. Its live availability and usage limits must be checked in that account after deployment. It currently supports conversation only.
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:9a8e983c529f56740a3d8f720035556f7c263e8bd2583b06b53cdbe762fae626 -->
+
+Root configuration includes `AI` (Workers AI) and `BEEMAX_LIMITER`, in addition to the existing administrator-session binding. BEEMAX uses the owner's Workers AI account and requires no model key in browser code. Its live availability and usage limits must be checked in that account after deployment. The assistant supports conversation; it does not execute commands, publish, or transfer money.
+
+In the private HUD, the research assistant and `/research` command summarize configured RSS, Atom, or JSON feeds. Set `PUBLIC_FEEDS_JSON` to an array of objects with HTTPS `url`, `label`, and `scope` fields; optionally set `PRIVATE_WWW_FEED_URL` and the `PRIVATE_WWW_FEED_TOKEN` secret. Private feeds are only read after an AdminSessionDO check. Research needs at least one available feed item and the Workers AI binding. These feeds are configured sources, not an unrestricted web search; source material is treated as untrusted. The HUD video player accepts direct HTTPS video or HLS URLs; stream availability and CORS depend on the video host.
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 <!-- coderabbit-ai-generated:v1 -->
 
@@ -206,7 +214,25 @@ npm run preview:worker -- --ip 0.0.0.0
 
 The preview serves built assets and local D1/KV storage at port 8787. After frontend edits, rebuild. `npm run dev` is available for Vite development; its API proxies target the same root Worker on port 8787.
 
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:b40d68b5037384ee36befe9ff9bfe8383c24d8fb4a8e14c788e52fa5e6679385 -->
+
+## Client deployment notes
+
+Apply pending D1 migrations before deploying. Migration `0029_hide_original_demo_artworks.sql` hides unchanged, unpurchased records from the original demo seed while preserving all artwork rows; edited and purchased records remain visible. Review the target database and its recovery point first.
+
+Keep the Base USDC settlement recipient stable while submitted payments await verification. <!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:04053733bf493b9dc9ee9bd74ee9e4755c27f8b4cbdf3f984d843084e10a833b -->
+
+Receipt verification uses the currently configured recipient; changing it before the first successful verification prevents that payment from being verified automatically.
+
+<!-- /coderabbit-ai-generated:v1 --> A verified receipt can be retried after a destination change. Treasury release records are bookkeeping only and do not send funds.
+
 ## Outstanding release verification
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 - Provide and publish real inventory and sports research, or specify a licensed sports provider for integration.
 - Verify production Cloudflare resources, secrets, migrations, and deployment.
