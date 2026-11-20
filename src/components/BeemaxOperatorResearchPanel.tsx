@@ -8,6 +8,8 @@ interface OperatorResearchResult {
   error?: string;
 }
 
+const sourceUrl = (value: string) => { try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password ? url.href : null; } catch { return null; } };
+
 export const BeemaxOperatorResearchPanel: React.FC = () => {
   const [prompt, setPrompt] = useState('');
   const [status, setStatus] = useState<'idle' | 'running' | 'ready' | 'unavailable' | 'error'>('idle');
@@ -46,7 +48,7 @@ export const BeemaxOperatorResearchPanel: React.FC = () => {
       if (controller.signal.aborted) return;
       if (!res.ok) {
         setStatus('error');
-        setResult({ error: `Research request rejected (HTTP ${res.status}).` });
+        setResult({ error: typeof data === 'object' && data !== null && 'error' in data && typeof data.error === 'string' ? data.error : `Research request rejected (HTTP ${res.status}).` });
         return;
       }
       if (typeof data !== 'object' || data === null ||
@@ -89,7 +91,7 @@ export const BeemaxOperatorResearchPanel: React.FC = () => {
       {result && <div style={{ marginTop: 12, background: '#070b14', border: `1px solid ${status === 'ready' ? '#22c55e' : '#334155'}`, borderRadius: 8, padding: 12, fontSize: 12 }}>
         {result.error ? <div style={{ color: '#fbbf24' }}>{result.error}</div> : <>
           <div style={{ color: '#f8fafc', whiteSpace: 'pre-wrap' }}>{result.summary || 'No summary returned.'}</div>
-          {!!result.sources?.length && <div style={{ marginTop: 8, color: '#94a3b8', overflowWrap: 'anywhere' }}>Sources: {result.sources.join(' • ')}</div>}
+          {!!result.sources?.length && <div style={{ marginTop: 8, color: '#94a3b8', overflowWrap: 'anywhere' }}>Sources: {result.sources.map(source => sourceUrl(source) ? <a key={source} href={sourceUrl(source)!} target="_blank" rel="noreferrer" style={{ marginLeft: 8 }}>{source}</a> : null)}</div>}
           <div style={{ marginTop: 6, color: '#4ade80', fontSize: 11 }}>MAX Compute: {MAX_COMPUTE_VALUE}</div>
         </>}
       </div>}

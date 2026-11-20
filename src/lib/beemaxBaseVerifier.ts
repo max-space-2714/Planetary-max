@@ -75,18 +75,19 @@ export async function verifyOptInUsdcSettlement(
     }),
   });
   if (!res.ok) {
-    throw new Error("Base USDC settlement verification failed");
+    const error = await res.json().catch(() => ({})) as {error?:string};
+    throw new Error(error.error || "Verification outcome unavailable; retry the same receipt.");
   }
   return res.json();
 }
 
 export async function recordOptInOrder(params: {
   tierCode?:string; optedIn:true; domain:OptInUsdcSettlementRequest['domain']; mode:OptInUsdcSettlementRequest['mode']; amountUsdc:string; idempotencyKey:string;
-}): Promise<{orderId:string}> {
+}): Promise<{orderId:string;eventId?:string;verified?:boolean;txHash?:string}> {
   const response = await fetch('/api/settlements/base-usdc/intake', {
     method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(params),
   });
-  const body = await response.json() as {orderId:string;error?:string};
+  const body = await response.json() as {orderId:string;eventId?:string;verified?:boolean;txHash?:string;error?:string};
   if (!response.ok) throw new Error(body.error || 'Order recording unavailable');
   return body;
 }

@@ -89,24 +89,41 @@ function ModuleOutputView({ moduleId }: { moduleId: HubModuleId }) {
   </div>;
 }
 
+// Save recovery state synchronously before starting financial requests.
+function useRecoveryState<T>(key: string, initial: T): [T, (value: T) => void] {
+  const [value, update] = useState<T>(() => {
+    try { const saved = sessionStorage.getItem(key); return saved === null ? initial : JSON.parse(saved); }
+    catch { return initial; }
+  });
+  return [value, next => { sessionStorage.setItem(key, JSON.stringify(next)); update(next); }];
+}
+
 function SettlementControls({ domain, mode }: {
   domain: OptInUsdcSettlementRequest['domain'];
   mode: OptInUsdcSettlementRequest['mode'];
 }) {
-  const [amount, setAmount] = useState(mode === 'paid-tier' ? '5.000000' : '1.000000');
-  const [tierCode,setTierCode] = useState('tier_std_5');
+  const scope = `beemax-settlement:${domain}:${mode}:`;
+  const [amount, setAmount] = useRecoveryState(scope+'amount', mode === 'paid-tier' ? '5.000000' : '1.000000');
+  const [tierCode,setTierCode] = useRecoveryState(scope+'tier','tier_std_5');
   const [quote, setQuote] = useState<Awaited<ReturnType<typeof requestOptInUsdcQuote>>>();
-  const [orderId, setOrderId] = useState<string>();
-  const [intakeKey] = useState(() => crypto.randomUUID());
-  const [sent, setSent] = useState(false);
+  const [orderId, setOrderId] = useRecoveryState<string | undefined>(scope+'order',undefined);
+  const [intakeKey,setIntakeKey] = useRecoveryState(scope+'key',crypto.randomUUID());
+  const [outcome,setOutcome] = useRecoveryState<{orderId:string;eventId?:string;verified?:boolean;txHash?:string} | null>(scope+'outcome',null);
+  const [locked,setLocked] = useRecoveryState(scope+'locked',false);
+  const [sent, setSent] = useRecoveryState(scope+'sent',false);
+  const [confirmedHash, setConfirmedHash] = useRecoveryState(scope+'confirmed-hash',false);
   const params = () => ({domain, mode, ...(mode === 'paid-tier' ? {tierCode} : {}), amountUsdc: amount.split('.')[0] + '.' + (amount.split('.')[1] || '').padEnd(6, '0'), optedIn:true as const});
   const walletAction = async (action:'pay'|'sign'|'record') => {
     if (pending.current) return;
     pending.current=true; setBusy(true); setStatus('');
     try {
       if(action==='record') {
+        if (!/^(0|[1-9]\d{0,11})(\.\d{1,6})?$/.test(amount) || !/[1-9]/.test(amount)) throw new Error('Enter a positive USDC amount with up to six decimals.');
+        setIntakeKey(intakeKey); setLocked(true);
         const order=await recordOptInOrder({...params(),idempotencyKey:intakeKey});
-        setOrderId(order.orderId);setStatus('Order recorded internally. No payment verified or sent.');return;
+        setOutcome(order);setOrderId(order.orderId);
+        if(order.verified && order.txHash) setTxHash(order.txHash);
+        setStatus(order.verified ? 'Payment was already verified and recorded.' : 'Order recorded internally. No payment verified or sent.');return;
       }
       const wallet=(window as unknown as {ethereum?:{request:(args:{method:string;params?:unknown[]})=>Promise<unknown>}}).ethereum;
       if(!wallet)throw new Error('Open this page with a compatible Ethereum wallet. Wallet-free recording remains available.');
@@ -114,12 +131,19 @@ function SettlementControls({ domain, mode }: {
       const payer=accounts[0];
       if(!/^0x[0-9a-f]{40}$/i.test(payer || ''))throw new Error('Wallet account unavailable');
       if(action==='pay') {
-        if(sent || txHash || !quote?.payment)throw new Error('Request a payment quote first, or verify the existing transaction.');
+        if((locked && !orderId) || sent || txHash || !quote?.payment)throw new Error('Request a payment quote first, or verify the existing transaction.');
         const chain=await wallet.request({method:'eth_chainId'});
         if(chain!=='0x2105')throw new Error('Select Base Mainnet (8453) in your wallet before paying.');
-        const hash=await wallet.request({method:'eth_sendTransaction',params:[{chainId:'0x2105',from:payer,to:quote.payment.to,data:quote.payment.data,value:quote.payment.value}]});
+        setPayerAddress(payer); setSent(true);
+        let hash: unknown;
+        try { hash=await wallet.request({method:'eth_sendTransaction',params:[{chainId:'0x2105',from:payer,to:quote.payment.to,data:quote.payment.data,value:quote.payment.value}]}); }
+        catch (error) {
+          if (typeof error === 'object' && error !== null && 'code' in error && error.code === 4001) setSent(false);
+          else throw new Error('Payment status is unknown. Check wallet activity and enter the transaction hash before verifying.');
+          throw error;
+        }
         if(typeof hash!=='string' || !/^0x[0-9a-f]{64}$/i.test(hash))throw new Error('Wallet did not return a transaction hash. Check wallet activity before retrying.');
-        setTxHash(hash);setPayerAddress(payer);setSent(true);setSignature('');
+        setTxHash(hash);setConfirmedHash(true);setPayerAddress(payer);setSent(true);setSignature('');
         setStatus('Transaction submitted. Wait for confirmation, then sign proof and verify. Do not pay again.');
       } else {
         if(!/^0x[0-9a-f]{64}$/i.test(txHash))throw new Error('Enter a transaction hash first.');
@@ -132,8 +156,8 @@ function SettlementControls({ domain, mode }: {
     } catch(error){setStatus(error instanceof Error?error.message:'Wallet request rejected');}
     finally {pending.current=false;setBusy(false);}
   };
-  const [txHash, setTxHash] = useState('');
-  const [payerAddress, setPayerAddress] = useState('');
+  const [txHash, setTxHash] = useRecoveryState(scope+'hash','');
+  const [payerAddress, setPayerAddress] = useRecoveryState(scope+'payer','');
   const [signature, setSignature] = useState('');
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
@@ -155,14 +179,15 @@ function SettlementControls({ domain, mode }: {
       const params = { domain, mode, ...(mode === 'paid-tier' ? {tierCode} : {}), amountUsdc: amount.split('.')[0] + '.' + (amount.split('.')[1] || '').padEnd(6, '0'), optedIn: true as const };
       if (verify) {
         const response: unknown = await verifyOptInUsdcSettlement({ ...params, ...(orderId ? {orderId,idempotencyKey:intakeKey} : {}), payerAddress, signature: signature as `0x${string}`, txHash: txHash as `0x${string}` });
+        if (typeof response === 'object' && response !== null && 'orderId' in response && typeof response.orderId === 'string') setOutcome(response as {orderId:string;eventId?:string;verified?:boolean;txHash?:string});
         const verified = typeof response === 'object' && response !== null && 'verified' in response && response.verified === true;
         setStatus(verified ? 'Payment verified and recorded in the internal ledger. Delivery remains locked; no match or wager was executed.' : 'The server has not confirmed this receipt as verified.');
       } else {
         setQuote(await requestOptInUsdcQuote(params));
         setStatus('Quote request completed. No payment, order or wager was initiated.');
       }
-    } catch {
-      setStatus('Settlement service unavailable or request rejected. No settlement is confirmed.');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Settlement outcome unknown. Retry verification with the same receipt.');
     } finally {
       pending.current = false;
       setBusy(false);
@@ -175,17 +200,17 @@ function SettlementControls({ domain, mode }: {
     <p>Record an order without a wallet, or explicitly pay native USDC on Base. Each wallet payment and proof signature requires your approval. Network gas fees may apply.</p>
     <button style={control} disabled={busy || !!orderId || !!txHash} onClick={()=>void walletAction('record')}>Record order without payment</button>
     {quote && <p>{quote.payment ? `Pay ${quote.amountUsdc} USDC to ${quote.payment.recipient} on Base (8453).` : 'Payment destination is not set up yet. Wallet-free order recording remains available.'}</p>}
-    <button style={control} disabled={busy || !quote?.payment || !!txHash || sent} onClick={()=>void walletAction('pay')}>Pay quoted USDC with wallet</button>
+    <button style={control} disabled={busy || outcome?.verified === true || (locked && !orderId) || !quote?.payment || !!txHash || sent} onClick={()=>void walletAction('pay')}>Pay quoted USDC with wallet</button>
     <form onSubmit={event => { event.preventDefault(); void submit(false); }}>
       <fieldset disabled={busy} style={{ border: 0, padding: 0 }}>
-        {mode === 'paid-tier' && <label>Output tier <select disabled={!!orderId || !!txHash || sent} value={tierCode} onChange={event=>{const tier=OUTPUT_TIERS.find(t=>t.id===event.target.value)!;setTierCode(tier.id);setAmount(tier.priceUsdc);setQuote(undefined);}}>{OUTPUT_TIERS.filter(t=>t.priceUsdc!=='0.000000').map(t=><option key={t.id} value={t.id}>{t.tierLabel} — {t.priceUsdc} USDC</option>)}</select></label>}
-        <label>USDC amount <input required disabled={mode === 'paid-tier' || !!orderId || !!txHash || sent} inputMode="decimal" value={amount} onChange={event => { setAmount(event.target.value); setQuote(undefined); setStatus(''); }} /></label>
+        {mode === 'paid-tier' && <label>Output tier <select disabled={locked || !!orderId || !!txHash || sent} value={tierCode} onChange={event=>{const tier=OUTPUT_TIERS.find(t=>t.id===event.target.value)!;setTierCode(tier.id);setAmount(tier.priceUsdc);setQuote(undefined);}}>{OUTPUT_TIERS.filter(t=>t.priceUsdc!=='0.000000').map(t=><option key={t.id} value={t.id}>{t.tierLabel} — {t.priceUsdc} USDC</option>)}</select></label>}
+        <label>USDC amount <input required disabled={mode === 'paid-tier' || locked || !!orderId || !!txHash || sent} inputMode="decimal" value={amount} onChange={event => { setAmount(event.target.value); setQuote(undefined); setStatus(''); }} /></label>
         <button style={control} type="submit">Request Base USDC quote</button>
       </fieldset>
     </form>
     <form onSubmit={event => { event.preventDefault(); void submit(true); }}>
       <fieldset disabled={busy} style={{ border: 0, padding: 0, marginTop: 12 }}>
-        <label>Existing transaction hash <input disabled={sent} required value={txHash} onChange={event => { setTxHash(event.target.value); setStatus(''); }} /></label>
+        <label>Existing transaction hash <input disabled={confirmedHash} required value={txHash} onChange={event => { setTxHash(event.target.value); setStatus(''); }} /></label>
         <label>Payer wallet address <input required pattern="0x[a-fA-F0-9]{40}" value={payerAddress} onChange={event => { setPayerAddress(event.target.value); setSignature(''); setStatus(''); }} /></label>
         <button type="button" style={control} onClick={()=>void walletAction('sign')}>Sign receipt proof with wallet</button>
         <p>Explicitly sign this message in your wallet only when ready:</p>
@@ -194,6 +219,13 @@ function SettlementControls({ domain, mode }: {
         <button style={control} type="submit">Verify Base USDC receipt</button>
       </fieldset>
     </form>
+    {sent && !txHash && <p>Check wallet activity and enter the transaction hash before trying to verify. Do not pay again while the payment status is unknown.</p>}
+    {outcome && <p>Order: {outcome.orderId}{outcome.eventId ? ` • Ledger event: ${outcome.eventId}` : ''}</p>}
+    {outcome && (outcome.verified === true || (!sent && !txHash)) && <button type="button" style={control} disabled={busy} onClick={() => {
+      setAmount(mode === 'paid-tier' ? '5.000000' : '1.000000'); setTierCode('tier_std_5');
+      setOrderId(undefined); setIntakeKey(crypto.randomUUID()); setOutcome(null); setLocked(false); setSent(false); setConfirmedHash(false);
+      setTxHash(''); setPayerAddress(''); setSignature(''); setQuote(undefined); setStatus('Ready for a new order.');
+    }}>Start another order</button>}
     <p role="status" aria-live="polite">{busy ? 'Request in progress…' : status}</p>
   </section>;
 }

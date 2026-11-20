@@ -95,19 +95,38 @@ export async function handleBaseUsdcVerifyRoute(request: Request, env: Settlemen
   const payer = typeof body.payerAddress === 'string' ? body.payerAddress.trim().toLowerCase() : '';
   if (!HASH.test(txHash) || !ADDRESS.test(payer)) return json({ ok: false, error: 'Invalid txHash or payerAddress' }, 400);
   if (body.tenantId !== undefined && body.tenantId !== payer) return json({ ok: false, error: 'Tenant must match the proving payer wallet' }, 403);
-  const recipient = await settlementRecipient(env);
-  if (!ADDRESS.test(recipient)) return json({ ok: false, error: 'Settlement recipient not configured' }, 503);
   if (typeof body.signature !== 'string' || !/^0x[\da-fA-F]{130}$/.test(body.signature)) return json({ ok: false, error: 'Payer signature required' }, 400);
   const domain = body.domain as string, mode = body.mode as string, amount = body.amountUsdc as string;
   try {
     if (!await verifyMessage({ address: payer as `0x${string}`, signature: body.signature as `0x${string}`, message: baseUsdcSettlementMessage(new URL(request.url).origin, { domain, mode, tierCode: body.tierCode as string | undefined, amountUsdc: amount, txHash, payerAddress: payer }) })) return json({ ok: false, error: 'Invalid payer signature' }, 403);
   } catch { return json({ ok: false, error: 'Invalid payer signature' }, 403); }
+  // Authenticate the signed context before recovering a previously verified receipt.
+  // Recovery uses its stored recipient, so destination changes cannot strand retries.
+  const recover = async (): Promise<Response | null> => {
+    const prior = await env.DB.prepare(`SELECT o.*,e.event_id,e.accounting_bucket FROM output_orders o
+      JOIN settlement_events e ON e.order_id=o.order_id
+      WHERE o.tx_hash=? AND e.tx_hash=? AND e.rail='BASE_USDC' AND o.settlement_status='verified_settlement'`)
+      .bind(txHash,txHash).first<Record<string,string>>();
+    if (!prior) return null;
+    if (prior.payer_address !== payer || prior.price_usdc !== amount ||
+        prior.output_title !== `${domain} ${mode} transfer` || prior.tier_code !== (body.tierCode || '') ||
+        prior.accounting_bucket !== bucketFor(body) ||
+        (body.orderId !== undefined && (body.orderId !== prior.order_id || body.idempotencyKey !== prior.intake_key))) {
+      return json({ok:false,error:'Receipt belongs to a different order context'},409);
+    }
+    return json({ok:true,verified:true,...constants,orderId:prior.order_id,eventId:prior.event_id,
+      txHash,bucket:prior.accounting_bucket,duplicate:true,delivery_status:'locked'});
+  };
+  const recovered = await recover();
+  if (recovered) return recovered;
+  const recipient = await settlementRecipient(env);
+  if (!ADDRESS.test(recipient) || recipient === `0x${'0'.repeat(40)}`) return json({ ok: false, error: 'Settlement recipient not configured' }, 503);
   const check = await verifyBaseUsdcTransferReceipt({ rpcUrl: env.RPC_URL || 'https://mainnet.base.org', txHash, expectedPayer: payer, expectedRecipient: recipient, expectedAmountBaseUnits: parseUsdcToBaseUnits(amount)! });
   if (!check.verified) return json({ ok: false, verified: false, error: check.reason }, 422);
   const orderId = typeof body.orderId === 'string' ? body.orderId : crypto.randomUUID(), eventId = crypto.randomUUID();
   if (body.orderId !== undefined) {
     const existing = await env.DB.prepare('SELECT * FROM output_orders WHERE order_id = ? AND intake_key = ?').bind(orderId, typeof body.idempotencyKey === 'string' ? body.idempotencyKey : '').first<Record<string, string>>();
-    if (!existing || existing.price_usdc !== amount || existing.output_title !== `${domain} ${mode} transfer` || existing.tx_hash || existing.tier_code !== (body.tierCode || '')) return json({ ok: false, error: 'Order does not match receipt context' }, 409);
+    if (!existing || existing.price_usdc !== amount || existing.output_title !== `${domain} ${mode} transfer` || existing.tx_hash || existing.tier_code !== (body.tierCode || '')) return await recover() || json({ ok: false, error: 'Order does not match receipt context' }, 409);
     const allocation = await env.DB.prepare('SELECT accounting_bucket FROM settlement_events WHERE order_id=?').bind(orderId).first<{accounting_bucket:string}>();
     if (allocation?.accounting_bucket !== bucketFor(body)) return json({ok:false,error:'Order allocation requires reconciliation'},409);
     try {
@@ -115,9 +134,10 @@ export async function handleBaseUsdcVerifyRoute(request: Request, env: Settlemen
         env.DB.prepare(`UPDATE output_orders SET tx_hash=?, payer_address=?, recipient_address=?, tenant_id=?, order_status='settlement_verified', settlement_status='verified_settlement', verified_at=datetime('now') WHERE order_id=? AND tx_hash=''`).bind(txHash, payer, recipient, payer, orderId),
         env.DB.prepare(`UPDATE settlement_events SET tx_hash=?, from_address=?, to_address=?, rail='BASE_USDC', verified_amount_usdc=?, amount_usdc=? WHERE order_id=? AND rail='INTERNAL_LEDGER' AND EXISTS (SELECT 1 FROM output_orders WHERE order_id=? AND tx_hash=?)`).bind(txHash, payer, recipient, formatAtomicToUsdc(BigInt(check.amountUnits!)), formatAtomicToUsdc(BigInt(check.amountUnits!)), orderId, orderId, txHash),
       ]);
-      if (!updated[0].meta.changes) return json({ok:false,error:'Order already verified'},409);
-    } catch { return json({ ok: false, error: 'Receipt already claimed' }, 409); }
-    return json({ ok: true, verified: true, ...constants, orderId, txHash, delivery_status: 'locked' });
+      if (!updated[0].meta.changes) return await recover() || json({ok:false,error:'Order changed; retry with the same context'},409);
+    } catch { return await recover() || json({ ok: false, error: 'Receipt already claimed' }, 409); }
+    const outcome = await recover();
+    return outcome || json({ok:false,error:'Settlement requires reconciliation'},503);
   }
   const verifiedAmount = formatAtomicToUsdc(BigInt(check.amountUnits!));
   try {
@@ -127,7 +147,7 @@ export async function handleBaseUsdcVerifyRoute(request: Request, env: Settlemen
       env.DB.prepare(`INSERT INTO settlement_events (event_id,tx_hash,chain_id,rail,source_kind,from_address,to_address,amount_usdc,order_id,token_contract,verified_amount_usdc,accounting_bucket)
         VALUES (?,?,8453,'BASE_USDC','output_order',?,?,?,?,?,?,?)`).bind(eventId, txHash, payer, recipient, verifiedAmount, orderId, BASE_NATIVE_USDC, verifiedAmount, bucketFor(body)),
     ]);
-  } catch { return json({ ok: false, verified: false, error: 'Receipt already claimed or settlement could not be recorded' }, 409); }
+  } catch { return await recover() || json({ ok: false, verified: false, error: 'Receipt already claimed or settlement could not be recorded' }, 409); }
   return json({ ok: true, verified: true, ...constants, orderId, eventId, txHash, delivery_status: 'locked' });
 }
 
@@ -147,9 +167,9 @@ async function recordInternalOrder(body: Input, env: SettlementEnv): Promise<Res
         VALUES (?,?,'INTERNAL_LEDGER','output_order','',?,?,?,?)`).bind(eventId,`internal:${orderId}`,body.amountUsdc,orderId,bucket,bucket === 'escrow' ? 'pending' : 'settled'),
     ]);
   } catch {
-    const prior = await env.DB.prepare(`SELECT o.order_id,o.tier_code,o.output_title,o.price_usdc,e.accounting_bucket FROM output_orders o JOIN settlement_events e ON e.order_id=o.order_id WHERE o.intake_key=?`).bind(key).first<Record<string,string>>();
+    const prior = await env.DB.prepare(`SELECT o.order_id,o.tier_code,o.output_title,o.price_usdc,o.settlement_status,e.event_id,e.tx_hash,e.accounting_bucket FROM output_orders o JOIN settlement_events e ON e.order_id=o.order_id WHERE o.intake_key=?`).bind(key).first<Record<string,string>>();
     if (!prior || prior.tier_code !== (body.tierCode || '') || prior.output_title !== title || prior.price_usdc !== body.amountUsdc || prior.accounting_bucket !== bucket) return json({ ok:false,error:'Order conflict or ledger unavailable' },409);
-    return json({ok:true,verified:false,...constants,orderId:prior.order_id,bucket,duplicate:true,delivery_status:'locked'});
+    return json({ok:true,verified:prior.settlement_status === 'verified_settlement',...constants,orderId:prior.order_id,eventId:prior.event_id,txHash:prior.settlement_status === 'verified_settlement' ? prior.tx_hash : undefined,bucket,duplicate:true,delivery_status:'locked'});
   }
   return json({ok:true,verified:false,...constants,orderId,eventId,bucket,delivery_status:'locked',financial_note:'Internal bookkeeping only; no payment verified or moved.'});
 }

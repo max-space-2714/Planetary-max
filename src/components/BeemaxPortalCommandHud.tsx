@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import './BeemaxPortalCommandHud.css';
 import TreasuryControls from '../modules/admin/TreasuryControls';
+import BeeMaxAssistant from '../modules/admin/BeeMaxAssistant';
+import BeemaxVideoPlayer from './BeemaxVideoPlayer';
 import BeemaxOperatorResearchPanel from './BeemaxOperatorResearchPanel';
 
 type ScopeKey = 'BEEMAX' | 'MAX-ECOSYSTEM' | 'MAX-INSTITUTE' | 'MAX-MEDIA' | 'MAX-SPORTS' | 'MAX-CHESS' | 'MAX-SPACES' | 'Instant Digital Space' | 'MAX-COMPUTE' | 'P2P-COMPUTE' | 'MAX-FINANCE' | 'MAX-SOVEREIGN';
@@ -22,6 +24,7 @@ interface InternetFeedsPayload {
 const SCOPES: ScopeKey[] = ['BEEMAX', 'MAX-ECOSYSTEM', 'MAX-INSTITUTE', 'MAX-MEDIA', 'MAX-SPORTS', 'MAX-CHESS', 'MAX-SPACES', 'Instant Digital Space', 'MAX-COMPUTE', 'P2P-COMPUTE', 'MAX-FINANCE', 'MAX-SOVEREIGN'];
 const GATEWAYS = ['G1: Charter & Sovereign Mandate', 'G2: ICV Architecture', 'G3: Organizational Topology', 'G4: MAX MATH & MAX PHYSICS Feed', 'G5: MAX-COMPUTE & P2P Compute', 'G6: MAX-FINANCE & Reinvestment Ledger', 'G7: MAX-INTERNET Free Discovery'];
 const RELEASE_ID = '3c8ee1c4-79b8-4bfd-be18-430679f452f2';
+const safeLink = (value?: string) => { try { const url = new URL(value || ''); return url.protocol === 'https:' && !url.username && !url.password ? url.href : null; } catch { return null; } };
 const FEED_SCOPES = ['ALL', 'MAX-INTERNET', 'MAX-INSTITUTE', 'MAX-SPORTS', 'MAX-COMPUTE'];
 
 export const BeemaxPortalCommandHud: React.FC = () => {
@@ -38,11 +41,13 @@ export const BeemaxPortalCommandHud: React.FC = () => {
   const [historyIdx, setHistoryIdx] = useState(-1);
   const [walletOptInRequested, setWalletOptInRequested] = useState(false);
   const [scratchpad, setScratchpad] = useState('');
+  const [commandBusy, setCommandBusy] = useState(false);
+  const commandRequest = useRef<AbortController | null>(null);
+  useEffect(() => () => commandRequest.current?.abort(), []);
   const [logLines, setLogLines] = useState<string[]>([
     '[BEEMAX-PORTAL-OS1] Wallet-free mode active. Public MAX-INTERNET access is free.',
     '[LEDGER] Base Mainnet (8453) native USDC requires explicit opt-in. MAX Compute: 0.000000.',
   ]);
-  const videoRef = useRef<HTMLVideoElement>(null);
 
   const loadInternetFeeds = async (filter = feedFilter) => {
     setFeedError('');
@@ -61,24 +66,23 @@ export const BeemaxPortalCommandHud: React.FC = () => {
   };
 
 
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    if (activeStream) video.src = activeStream;
-    else { video.pause(); video.removeAttribute('src'); video.load(); }
-    return () => { video.pause(); video.removeAttribute('src'); };
-  }, [activeStream]);
-
   const appendLog = (line: string) => setLogLines(previous => [...previous.slice(-79), line]);
-  const runCommand = (raw: string) => {
+  const runCommand = async (raw: string) => {
     const trimmed = raw.trim();
-    if (!trimmed) return;
+    if (!trimmed || commandRequest.current) return;
     setHistory(previous => [trimmed, ...previous.slice(0, 49)]);
     setHistoryIdx(-1);
     const lower = trimmed.toLowerCase();
     if (lower.startsWith('/research ') && trimmed.slice(10).trim()) {
-      appendLog(`Research requested: ${trimmed.slice(10).trim()}. Loading configured sources; automated synthesis is unavailable in this view.`);
-      void loadInternetFeeds();
+      const controller = new AbortController(); commandRequest.current = controller; setCommandBusy(true);
+      try {
+        const response = await fetch('/api/hud/research-query', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
+          body: JSON.stringify({ prompt: trimmed.slice(10).trim(), maxCompute: '0.000000', chainId: 8453 }) });
+        const data = await response.json() as { summary?: string; sources?: string[]; error?: string };
+        if (!response.ok || !data.summary) throw new Error(data.error || 'Research unavailable.');
+        appendLog(`BEEMAX research: ${data.summary}${data.sources?.length ? `\nSources: ${data.sources.join(' • ')}` : ''}`);
+      } catch (error) { if (!controller.signal.aborted) appendLog(error instanceof Error ? error.message : 'Research unavailable.'); }
+      finally { if (commandRequest.current === controller) commandRequest.current = null; if (!controller.signal.aborted) setCommandBusy(false); }
       return;
     }
     if (lower === '/clear') { setLogLines([]); return; }
@@ -99,10 +103,20 @@ export const BeemaxPortalCommandHud: React.FC = () => {
       } else appendLog('Gateway index must be 1 through 7.');
       return;
     }
-    appendLog(`[PROMPT:${scope}] ${trimmed} (local HUD only; no backend action was performed)`);
+    if (trimmed.startsWith('/')) { appendLog('Unknown command. Type /help.'); return; }
+    if (trimmed.length > 5900) { appendLog('Enter a shorter message.'); return; }
+    const controller = new AbortController(); commandRequest.current = controller; setCommandBusy(true);
+    try {
+      const response = await fetch('/api/admin/beemax/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
+        body: JSON.stringify({ messages: [{ role: 'user', content: `[${scope}] ${trimmed}` }] }) });
+      const data = await response.json() as { message?: string; error?: string };
+      if (!response.ok || !data.message) throw new Error(data.error || 'BEEMAX is unavailable.');
+      appendLog(`BEEMAX: ${data.message}`);
+    } catch (error) { if (!controller.signal.aborted) appendLog(error instanceof Error ? error.message : 'BEEMAX is unavailable.'); }
+    finally { if (commandRequest.current === controller) commandRequest.current = null; if (!controller.signal.aborted) setCommandBusy(false); }
   };
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') { event.preventDefault(); runCommand(command); setCommand(''); }
+    if (event.key === 'Enter') { event.preventDefault(); void runCommand(command); setCommand(''); }
     else if (event.key === 'ArrowUp') {
       event.preventDefault(); const next = Math.min(historyIdx + 1, history.length - 1);
       if (next >= 0) { setHistoryIdx(next); setCommand(history[next]); }
@@ -121,14 +135,14 @@ export const BeemaxPortalCommandHud: React.FC = () => {
         <p>Active Scope: <strong>{scope}</strong> | Wallet Mode: <strong>{walletOptInRequested ? 'Opt-In Requested' : 'Wallet-Free Default'}</strong></p>
         <button type="button" onClick={() => setWalletOptInRequested(value => !value)}>{walletOptInRequested ? 'Return to Wallet-Free Mode' : 'Opt-In Wallet (When Ready)'}</button>
       </header>
-      <TreasuryControls/><BeemaxOperatorResearchPanel />
+      <TreasuryControls/><BeeMaxAssistant/><BeemaxOperatorResearchPanel />
       <nav aria-label="Portal Scopes">{SCOPES.map(item => <button key={item} type="button" onClick={() => setScope(item)}>{item}</button>)}</nav>
       <section><h2>Release Anchor &amp; Cover Asset</h2><p>The Crown of Return (<code>{RELEASE_ID}</code>) — 30.00 USDC — 500 editions</p><img src="/assets/crown-cover.png" alt="The Crown of Return Cover" width={160} height={220} /></section>
       <section><h2>MAX-INSTITUTE Gateways (G1–G7)</h2><select value={gateway} onChange={event => setGateway(event.target.value)}>{GATEWAYS.map(item => <option key={item}>{item}</option>)}</select></section>
-      <section><h2>MAX-SPORTS Video HUD</h2><label>HTTPS stream URL <input type="url" placeholder="https://example.com/live/stream.m3u8" value={streamInput} onChange={event => setStreamInput(event.target.value)} /></label><button type="button" onClick={() => {
-        try { const parsed = new URL(streamInput.trim()); if (parsed.protocol !== 'https:') throw new Error(); setActiveStream(parsed.href); appendLog(`Attached stream: ${parsed.href}`); }
+      <section><h2>MAX-SPORTS Video HUD</h2><label>HTTPS stream URL <input type="url" placeholder="https://example.com/video.mp4 or stream.m3u8" value={streamInput} onChange={event => setStreamInput(event.target.value)} /></label><button type="button" onClick={() => {
+        try { const parsed = new URL(streamInput.trim()); if (parsed.protocol !== 'https:' || parsed.username || parsed.password) throw new Error(); setActiveStream(parsed.href); appendLog('Video attached.'); }
         catch { setActiveStream(''); appendLog('Enter a valid HTTPS stream URL.'); }
-      }}>Attach Stream</button><video poster="/assets/crown-cover.png" ref={videoRef} controls playsInline width={480} height={270} /></section>
+      }}>Attach Stream</button><BeemaxVideoPlayer url={activeStream} /></section>
       <section>
         <h2>Internet Feeds (Private HUD Reader)</h2>
         <label>Feed scope <select value={feedFilter} onChange={event => { setFeedFilter(event.target.value); void loadInternetFeeds(event.target.value); }}>
@@ -141,11 +155,11 @@ export const BeemaxPortalCommandHud: React.FC = () => {
           <li key={row.id}>
             <strong>[{row.scope} · {row.source}]</strong> {row.title}
             {row.summary ? <p>{row.summary}</p> : null}
-            {row.url ? <a href={row.url} target="_blank" rel="noreferrer">Open Source</a> : null}
+            {safeLink(row.url) ? <a href={safeLink(row.url)!} target="_blank" rel="noreferrer">Open Source</a> : null}
           </li>
         ))}</ul>
       </section>
-      <section><h2>Command Line &amp; History</h2><div>{['/state', '/help', '/space instant', '/media', '/clear'].map(chip => <button key={chip} type="button" onClick={() => runCommand(chip)}>{chip}</button>)}</div><input type="text" placeholder="/scope MAX-FINANCE, /gateway 4, /state, or a prompt" value={command} onChange={event => setCommand(event.target.value)} onKeyDown={handleKeyDown} /><pre>{logLines.join('\n')}</pre></section>
+      <section><h2>Command Line &amp; History</h2><div>{['/state', '/help', '/space instant', '/media', '/clear'].map(chip => <button key={chip} type="button" onClick={() => void runCommand(chip)}>{chip}</button>)}</div><input type="text" aria-label="BEEMAX command" disabled={commandBusy} placeholder="/scope MAX-FINANCE, /gateway 4, /state, or a prompt" value={command} onChange={event => setCommand(event.target.value)} onKeyDown={handleKeyDown} /><pre>{logLines.join('\n')}</pre></section>
       <section><h2>Session Scratchpad</h2><textarea rows={5} placeholder="Notes, reinvestment tags, or match observations..." value={scratchpad} onChange={event => setScratchpad(event.target.value)} /></section>
     </section>
   );
