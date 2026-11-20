@@ -113,7 +113,13 @@ npx wrangler d1 migrations apply planetary-max-db --remote --config ./wrangler.t
 
 Root configuration includes `AI` (Workers AI) and `BEEMAX_LIMITER`, in addition to the existing administrator-session binding. BEEMAX uses the owner's Workers AI account and requires no model key in browser code. Its live availability and usage limits must be checked in that account after deployment. The assistant supports conversation; it does not execute commands, publish, or transfer money.
 
-In the private HUD, the research assistant and `/research` command summarize configured RSS, Atom, or JSON feeds. Set `PUBLIC_FEEDS_JSON` to an array of objects with HTTPS `url`, `label`, and `scope` fields; optionally set `PRIVATE_WWW_FEED_URL` and the `PRIVATE_WWW_FEED_TOKEN` secret. Private feeds are only read after an AdminSessionDO check. Research needs at least one available feed item and the Workers AI binding. These feeds are configured sources, not an unrestricted web search; source material is treated as untrusted. The HUD video player accepts direct HTTPS video or HLS URLs; stream availability and CORS depend on the video host.
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:32e21437a07ac80949b8aabce86a0f60f7a4f915a6f6e6dd14c50b5fd338cc2d -->
+
+In the private HUD, the research assistant and `/research` command summarize configured RSS, Atom, or JSON feeds. Use `/web <query>` for explicit web search through the authenticated `/api/hud/web-query` endpoint. Set the server secret with `npx wrangler secret put BEEMAX_WEB_SEARCH_API_KEY` using a Brave Search API key. Only the explicit query is sent to Brave; results are excerpts and source URLs without AI synthesis. Missing configuration fails closed. Web lookup requires AdminSessionDO, a same-origin POST, and BEEMAX_LIMITER; MAX Compute stays `0.000000`. It never reads configured feeds or KV caches, and responses use `Cache-Control: no-store`. Ordinary prompts keep using the authenticated assistant. See https://api-dashboard.search.brave.com/documentation/services/web-search.
+
+<!-- /coderabbit-ai-generated:v1 --> Set `PUBLIC_FEEDS_JSON` to an array of objects with HTTPS `url`, `label`, and `scope` fields; optionally set `PRIVATE_WWW_FEED_URL` and the `PRIVATE_WWW_FEED_TOKEN` secret. Private feeds are only read after an AdminSessionDO check. Research needs at least one available feed item and the Workers AI binding. These feeds are configured sources, not an unrestricted web search; source material is treated as untrusted. The HUD video player accepts direct HTTPS video or HLS URLs; stream availability and CORS depend on the video host.
 
 <!-- /coderabbit-ai-generated:v1 -->
 

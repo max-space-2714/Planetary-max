@@ -73,20 +73,25 @@ export const BeemaxPortalCommandHud: React.FC = () => {
     setHistory(previous => [trimmed, ...previous.slice(0, 49)]);
     setHistoryIdx(-1);
     const lower = trimmed.toLowerCase();
-    if (lower.startsWith('/research ') && trimmed.slice(10).trim()) {
+    const lookup = trimmed.match(/^\/(web|research)(?:\s+([\s\S]*))?$/i);
+    if (lookup) {
+      const kind = lookup[1].toLowerCase();
+      const prompt = (lookup[2] || '').trim();
+      if (!prompt) { appendLog(`Usage: /${kind} <prompt>`); return; }
+      if (prompt.length > 6000) { appendLog('Enter a shorter lookup prompt.'); return; }
       const controller = new AbortController(); commandRequest.current = controller; setCommandBusy(true);
       try {
-        const response = await fetch('/api/hud/research-query', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
-          body: JSON.stringify({ prompt: trimmed.slice(10).trim(), maxCompute: '0.000000', chainId: 8453 }) });
+        const response = await fetch(`/api/hud/${kind === 'web' ? 'web' : 'research'}-query`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
+          body: JSON.stringify({ prompt, maxCompute: '0.000000', chainId: 8453 }) });
         const data = await response.json() as { summary?: string; sources?: string[]; error?: string };
-        if (!response.ok || !data.summary) throw new Error(data.error || 'Research unavailable.');
-        appendLog(`BEEMAX research: ${data.summary}${data.sources?.length ? `\nSources: ${data.sources.join(' • ')}` : ''}`);
-      } catch (error) { if (!controller.signal.aborted) appendLog(error instanceof Error ? error.message : 'Research unavailable.'); }
+        if (!response.ok || !data.summary) throw new Error(data.error || `${kind === 'web' ? 'Web lookup' : 'Research'} unavailable.`);
+        appendLog(`BEEMAX ${kind}: ${data.summary}${data.sources?.length ? `\nSources: ${data.sources.join(' • ')}` : ''}`);
+      } catch (error) { if (!controller.signal.aborted) appendLog(error instanceof Error ? error.message : `${kind === 'web' ? 'Web lookup' : 'Research'} unavailable.`); }
       finally { if (commandRequest.current === controller) commandRequest.current = null; if (!controller.signal.aborted) setCommandBusy(false); }
       return;
     }
     if (lower === '/clear') { setLogLines([]); return; }
-    if (lower === '/help') { appendLog('Commands: /research <prompt> | /scope <name> | /gateway <1-7> | /space instant | /media | /state | /clear'); return; }
+    if (lower === '/help') { appendLog('Commands: /web <prompt> | /research <prompt> | /scope <name> | /gateway <1-7> | /space instant | /media | /state | /clear'); return; }
     if (lower === '/state') { appendLog(`STATE -> scope=${scope} | gateway="${gateway}" | walletMode=${walletOptInRequested ? 'opt-in-ready' : 'wallet-free'} | stream=${activeStream || 'none'}`); return; }
     if (lower === '/media') { setScope('MAX-MEDIA'); appendLog('Switched to MAX-MEDIA stream stage.'); return; }
     if (lower === '/space instant') { setScope('Instant Digital Space'); appendLog('Opened Instant Digital Space view.'); return; }
@@ -131,7 +136,7 @@ export const BeemaxPortalCommandHud: React.FC = () => {
     <section aria-label="BEEMAX-PORTAL-OS1 Command HUD">
       <header>
         <a href="/">✳ BEEMAX-PORTAL-OS1</a><span>PRIVATE · VERIFIED OPERATOR SESSION</span><a href="/#/admin">Operator sign-in</a>
-        <h1>Private Portal-OS1 BEEMAX AI</h1><p>MAX Compute: <strong>0.000000</strong> • Internet sources load only on request. Use /research followed by your prompt.</p>
+        <h1>Private Portal-OS1 BEEMAX AI</h1><p>MAX Compute: <strong>0.000000</strong> • Internet sources load only on request. Use /web for web search or /research for configured feeds. Ordinary prompts use the authenticated assistant.</p>
         <p>Active Scope: <strong>{scope}</strong> | Wallet Mode: <strong>{walletOptInRequested ? 'Opt-In Requested' : 'Wallet-Free Default'}</strong></p>
         <button type="button" onClick={() => setWalletOptInRequested(value => !value)}>{walletOptInRequested ? 'Return to Wallet-Free Mode' : 'Opt-In Wallet (When Ready)'}</button>
       </header>
@@ -159,7 +164,7 @@ export const BeemaxPortalCommandHud: React.FC = () => {
           </li>
         ))}</ul>
       </section>
-      <section><h2>Command Line &amp; History</h2><div>{['/state', '/help', '/space instant', '/media', '/clear'].map(chip => <button key={chip} type="button" onClick={() => void runCommand(chip)}>{chip}</button>)}</div><input type="text" aria-label="BEEMAX command" disabled={commandBusy} placeholder="/scope MAX-FINANCE, /gateway 4, /state, or a prompt" value={command} onChange={event => setCommand(event.target.value)} onKeyDown={handleKeyDown} /><pre>{logLines.join('\n')}</pre></section>
+      <section><h2>Command Line &amp; History</h2><div>{['/state', '/help', '/space instant', '/media', '/clear'].map(chip => <button key={chip} type="button" onClick={() => void runCommand(chip)}>{chip}</button>)}</div><input type="text" aria-label="BEEMAX command" disabled={commandBusy} placeholder="/web <prompt>, /research <prompt>, /help, or a prompt" value={command} onChange={event => setCommand(event.target.value)} onKeyDown={handleKeyDown} /><pre>{logLines.join('\n')}</pre></section>
       <section><h2>Session Scratchpad</h2><textarea rows={5} placeholder="Notes, reinvestment tags, or match observations..." value={scratchpad} onChange={event => setScratchpad(event.target.value)} /></section>
     </section>
   );
