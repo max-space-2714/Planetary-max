@@ -6,7 +6,10 @@ let db:DatabaseSync;
 function statement(sql:string){let args:any[]=[];return {bind(...values:any[]){args=values;return this;},async first(){return db.prepare(sql).get(...args)??null;},async all(){return {results:db.prepare(sql).all(...args)};},async run(){const result=db.prepare(sql).run(...args);return {meta:{changes:Number(result.changes)}};}};}
 const env=()=>({ADMIN_PASSWORD:'synthetic-test-password',ADMIN_SESSIONS:{idFromName:()=>({}),get:()=>({fetch:async()=>new Response(null,{status:204})})},DB:{prepare:statement}} as any);
 function request(path='',body?:unknown,authorized=true,origin='https://max.test') {return app.request(`https://max.test/api/admin/treasury${path}`,{method:body?'POST':'GET',headers:{...(authorized?{Cookie:`max_admin=as1_${'a'.repeat(64)}`}:{ }),Origin:origin,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})},env());}
-beforeEach(()=>{db=new DatabaseSync(':memory:');for(const file of ['0022_max_finance_sovereign.sql','0024_sports_output_orders.sql','0025_output_order_settlement.sql','0027_wallet_optional_treasury.sql'])db.exec(readFileSync(`migrations/${file}`,'utf8'));for(const bucket of ['treasury','escrow','reallocation'])db.prepare('INSERT INTO settlement_events(event_id,tx_hash,source_kind,to_address,amount_usdc,accounting_bucket) VALUES (?,?,?,?,?,?)').run(bucket,bucket,'output_order','','2.000001',bucket);});
+beforeEach(()=>{db=new DatabaseSync(':memory:');db.exec("CREATE TABLE digital_orders(tx_reference TEXT,amount_cents INTEGER,payment_status TEXT);");for(const file of ['0022_max_finance_sovereign.sql','0024_sports_output_orders.sql','0025_output_order_settlement.sql','0027_wallet_optional_treasury.sql','0028_funded_treasury.sql'])db.exec(readFileSync(`migrations/${file}`,'utf8'));for(const bucket of ['treasury','escrow','reallocation']) {
+ db.prepare("INSERT INTO output_orders(order_id,output_title,tier_name,tx_hash,settlement_status) VALUES (?,?,?,?,'verified_settlement')").run(bucket,bucket,bucket,bucket);
+ db.prepare('INSERT INTO settlement_events(event_id,tx_hash,source_kind,to_address,amount_usdc,verified_amount_usdc,accounting_bucket,order_id) VALUES (?,?,?,?,?,?,?,?)').run(bucket,bucket,'output_order','','2.000001','2.000001',bucket,bucket);
+ }});
 afterEach(()=>db.close());
 it('requires AdminSessionDO for balances, destination and release actions',async()=>{
  for(const [path,body] of [['',undefined],['/destination',{destination:'wallet'}],['/releases',{amountUsdc:'1',reference:'r'.repeat(16)}]] as const) expect((await request(path,body,false)).status).toBe(401);
@@ -27,4 +30,27 @@ it('returns exact totals and records only bounded treasury releases with immutab
 it('rejects cross-origin writes and forbidden namespaces',async()=>{
  expect((await request('/destination',{destination:'wallet'},true,'https://evil.test')).status).toBe(403);
  expect((await request('/destination',{destination:'OPERATOR_NAMESPACE'})).status).toBe(403);
+});
+
+it('excludes unpaid commitments from releases and handles totals larger than int64',async()=>{
+ db.exec("DELETE FROM settlement_events; DELETE FROM output_orders");
+ for(let i=0;i<10;i++) db.prepare("INSERT INTO settlement_events(event_id,tx_hash,rail,source_kind,to_address,amount_usdc,accounting_bucket) VALUES (?,?,'INTERNAL_LEDGER','output_order','','999999999999.999999','treasury')").run(String(i),String(i));
+ expect(await (await request()).json()).toMatchObject({totals:{treasury:'0.000000'},commitments:{treasury:'9999999999999.999990'}});
+ await request('/destination',{destination:'wallet'});
+ expect((await request('/releases',{amountUsdc:'1',reference:'unfunded_release_1'})).status).toBe(409);
+ for(let i=0;i<10;i++) db.prepare("INSERT INTO artwork_funding VALUES (?,?)").run('art'+i,'999999999999.999999');
+ expect(await (await request()).json()).toMatchObject({totals:{treasury:'9999999999999.999990'}});
+ expect((await request('/releases',{amountUsdc:'1',reference:'funded_release_01'})).status).toBe(200);
+});
+it('adapts legacy digital sales and verified_settlement without double counting receipts',async()=>{
+ db.prepare("UPDATE settlement_events SET accounting_bucket='verified_settlement' WHERE event_id='treasury'").run();
+ db.prepare("INSERT INTO digital_orders VALUES ('digital',501,'confirmed')").run();
+ db.prepare("INSERT INTO digital_orders VALUES ('treasury',200,'confirmed')").run();
+ db.prepare("INSERT INTO artwork_funding VALUES ('digital','5.010000')").run();
+ expect(await (await request()).json()).toMatchObject({totals:{treasury:'7.010001'}});
+});
+it('serializes competing releases through the revision check',async()=>{
+ await request('/destination',{destination:'wallet'});
+ const responses=await Promise.all(['a','b'].map(c=>request('/releases',{amountUsdc:'2',reference:c.repeat(16)})));
+ expect(responses.map(r=>r.status).sort()).toEqual([200,409]);
 });

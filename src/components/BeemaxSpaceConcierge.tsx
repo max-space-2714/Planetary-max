@@ -1,3 +1,4 @@
+import { OUTPUT_TIERS } from '../shared/outputTiers';
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { BASE_CHAIN_ID, BASE_NATIVE_USDC, MAX_COMPUTE_VALUE, requestOptInUsdcQuote, recordOptInOrder, verifyOptInUsdcSettlement, type OptInUsdcSettlementRequest } from '../lib/beemaxBaseVerifier';
 
@@ -92,12 +93,13 @@ function SettlementControls({ domain, mode }: {
   domain: OptInUsdcSettlementRequest['domain'];
   mode: OptInUsdcSettlementRequest['mode'];
 }) {
-  const [amount, setAmount] = useState('1.000000');
+  const [amount, setAmount] = useState(mode === 'paid-tier' ? '5.000000' : '1.000000');
+  const [tierCode,setTierCode] = useState('tier_std_5');
   const [quote, setQuote] = useState<Awaited<ReturnType<typeof requestOptInUsdcQuote>>>();
   const [orderId, setOrderId] = useState<string>();
   const [intakeKey] = useState(() => crypto.randomUUID());
   const [sent, setSent] = useState(false);
-  const params = () => ({domain, mode, amountUsdc: amount.split('.')[0] + '.' + (amount.split('.')[1] || '').padEnd(6, '0'), optedIn:true as const});
+  const params = () => ({domain, mode, ...(mode === 'paid-tier' ? {tierCode} : {}), amountUsdc: amount.split('.')[0] + '.' + (amount.split('.')[1] || '').padEnd(6, '0'), optedIn:true as const});
   const walletAction = async (action:'pay'|'sign'|'record') => {
     if (pending.current) return;
     pending.current=true; setBusy(true); setStatus('');
@@ -150,7 +152,7 @@ function SettlementControls({ domain, mode }: {
     setBusy(true);
     setStatus('');
     try {
-      const params = { domain, mode, amountUsdc: amount.split('.')[0] + '.' + (amount.split('.')[1] || '').padEnd(6, '0'), optedIn: true as const };
+      const params = { domain, mode, ...(mode === 'paid-tier' ? {tierCode} : {}), amountUsdc: amount.split('.')[0] + '.' + (amount.split('.')[1] || '').padEnd(6, '0'), optedIn: true as const };
       if (verify) {
         const response: unknown = await verifyOptInUsdcSettlement({ ...params, ...(orderId ? {orderId,idempotencyKey:intakeKey} : {}), payerAddress, signature: signature as `0x${string}`, txHash: txHash as `0x${string}` });
         const verified = typeof response === 'object' && response !== null && 'verified' in response && response.verified === true;
@@ -176,7 +178,8 @@ function SettlementControls({ domain, mode }: {
     <button style={control} disabled={busy || !quote?.payment || !!txHash || sent} onClick={()=>void walletAction('pay')}>Pay quoted USDC with wallet</button>
     <form onSubmit={event => { event.preventDefault(); void submit(false); }}>
       <fieldset disabled={busy} style={{ border: 0, padding: 0 }}>
-        <label>USDC amount <input required disabled={!!orderId || !!txHash || sent} inputMode="decimal" value={amount} onChange={event => { setAmount(event.target.value); setQuote(undefined); setStatus(''); }} /></label>
+        {mode === 'paid-tier' && <label>Output tier <select disabled={!!orderId || !!txHash || sent} value={tierCode} onChange={event=>{const tier=OUTPUT_TIERS.find(t=>t.id===event.target.value)!;setTierCode(tier.id);setAmount(tier.priceUsdc);setQuote(undefined);}}>{OUTPUT_TIERS.filter(t=>t.priceUsdc!=='0.000000').map(t=><option key={t.id} value={t.id}>{t.tierLabel} — {t.priceUsdc} USDC</option>)}</select></label>}
+        <label>USDC amount <input required disabled={mode === 'paid-tier' || !!orderId || !!txHash || sent} inputMode="decimal" value={amount} onChange={event => { setAmount(event.target.value); setQuote(undefined); setStatus(''); }} /></label>
         <button style={control} type="submit">Request Base USDC quote</button>
       </fieldset>
     </form>
@@ -186,7 +189,7 @@ function SettlementControls({ domain, mode }: {
         <label>Payer wallet address <input required pattern="0x[a-fA-F0-9]{40}" value={payerAddress} onChange={event => { setPayerAddress(event.target.value); setSignature(''); setStatus(''); }} /></label>
         <button type="button" style={control} onClick={()=>void walletAction('sign')}>Sign receipt proof with wallet</button>
         <p>Explicitly sign this message in your wallet only when ready:</p>
-        <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{baseUsdcSettlementMessage(window.location.origin, { domain, mode, amountUsdc: /^(0|[1-9]\d*)(\.\d{1,6})?$/.test(amount) ? amount.split('.')[0] + '.' + (amount.split('.')[1] || '').padEnd(6, '0') : amount, txHash, payerAddress })}</pre>
+        <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{baseUsdcSettlementMessage(window.location.origin, { domain, mode, ...(mode === 'paid-tier' ? {tierCode} : {}), amountUsdc: /^(0|[1-9]\d*)(\.\d{1,6})?$/.test(amount) ? amount.split('.')[0] + '.' + (amount.split('.')[1] || '').padEnd(6, '0') : amount, txHash, payerAddress })}</pre>
         <label>Payer proof signature <input required pattern="0x[a-fA-F0-9]{130}" value={signature} onChange={event => setSignature(event.target.value)} /></label>
         <button style={control} type="submit">Verify Base USDC receipt</button>
       </fieldset>

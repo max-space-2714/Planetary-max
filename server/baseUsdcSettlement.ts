@@ -1,3 +1,4 @@
+import { getOutputTier, settlementBucket } from '../src/shared/outputTiers';
 import { encodeFunctionData, erc20Abi, verifyMessage } from 'viem';
 import { HUB_MODULES } from '../src/shared/hubModules';
 import { verifyBaseTransfer } from './base-settlement';
@@ -38,7 +39,7 @@ type Input = Record<string, unknown>;
 async function readInput(request: Request): Promise<Input | Response> {
   if (request.method !== 'POST') return json({ ok: false, error: 'Method not allowed' }, 405);
   const url = new URL(request.url);
-  if ([url.searchParams.get('namespace'), request.headers.get('x-target-namespace')].some(blocked)) return json({ ok: false, error: 'OPERATOR_NAMESPACE is not permitted' }, 403);
+  if ([...url.searchParams.getAll('namespace'), request.headers.get('x-target-namespace')].some(blocked)) return json({ ok: false, error: 'OPERATOR_NAMESPACE is not permitted' }, 403);
   if (request.headers.get('Origin') !== url.origin) return json({ ok: false, error: 'A same-origin request is required' }, 403);
   if (Number(request.headers.get('Content-Length')) > 16_384) return json({ ok: false, error: 'Request too large' }, 413);
   let body: unknown;
@@ -60,6 +61,11 @@ async function readInput(request: Request): Promise<Input | Response> {
   const amount = typeof input.amountUsdc === 'string' ? parseUsdcToBaseUnits(input.amountUsdc) : null;
   if (amount === null || amount <= 0n) return json({ ok: false, error: 'Invalid amountUsdc' }, 400);
   input.amountUsdc = formatAtomicToUsdc(amount);
+  if (input.mode === 'paid-tier') {
+    const tier = typeof input.tierCode === 'string' ? getOutputTier(input.tierCode) : undefined;
+    if (!tier || tier.priceUsdc === '0.000000' || tier.priceUsdc !== input.amountUsdc) return json({ok:false,error:'Select an approved paid tier at its catalog price'},400);
+  } else if (input.tierCode !== undefined) return json({ok:false,error:'Tier applies only to paid-tier requests'},400);
+  if (input.bucket !== undefined && input.bucket !== bucketFor(input)) return json({ok:false,error:'Allocation is controlled by server policy'},400);
   return input;
 }
 function blocked(value: unknown): boolean { return typeof value === 'string' && value.toUpperCase().includes('OPERATOR_NAMESPACE'); }
@@ -94,14 +100,16 @@ export async function handleBaseUsdcVerifyRoute(request: Request, env: Settlemen
   if (typeof body.signature !== 'string' || !/^0x[\da-fA-F]{130}$/.test(body.signature)) return json({ ok: false, error: 'Payer signature required' }, 400);
   const domain = body.domain as string, mode = body.mode as string, amount = body.amountUsdc as string;
   try {
-    if (!await verifyMessage({ address: payer as `0x${string}`, signature: body.signature as `0x${string}`, message: baseUsdcSettlementMessage(new URL(request.url).origin, { domain, mode, amountUsdc: amount, txHash, payerAddress: payer }) })) return json({ ok: false, error: 'Invalid payer signature' }, 403);
+    if (!await verifyMessage({ address: payer as `0x${string}`, signature: body.signature as `0x${string}`, message: baseUsdcSettlementMessage(new URL(request.url).origin, { domain, mode, tierCode: body.tierCode as string | undefined, amountUsdc: amount, txHash, payerAddress: payer }) })) return json({ ok: false, error: 'Invalid payer signature' }, 403);
   } catch { return json({ ok: false, error: 'Invalid payer signature' }, 403); }
   const check = await verifyBaseUsdcTransferReceipt({ rpcUrl: env.RPC_URL || 'https://mainnet.base.org', txHash, expectedPayer: payer, expectedRecipient: recipient, expectedAmountBaseUnits: parseUsdcToBaseUnits(amount)! });
   if (!check.verified) return json({ ok: false, verified: false, error: check.reason }, 422);
   const orderId = typeof body.orderId === 'string' ? body.orderId : crypto.randomUUID(), eventId = crypto.randomUUID();
   if (body.orderId !== undefined) {
     const existing = await env.DB.prepare('SELECT * FROM output_orders WHERE order_id = ? AND intake_key = ?').bind(orderId, typeof body.idempotencyKey === 'string' ? body.idempotencyKey : '').first<Record<string, string>>();
-    if (!existing || existing.price_usdc !== amount || existing.output_title !== `${domain} ${mode} transfer` || existing.tx_hash) return json({ ok: false, error: 'Order does not match receipt context' }, 409);
+    if (!existing || existing.price_usdc !== amount || existing.output_title !== `${domain} ${mode} transfer` || existing.tx_hash || existing.tier_code !== (body.tierCode || '')) return json({ ok: false, error: 'Order does not match receipt context' }, 409);
+    const allocation = await env.DB.prepare('SELECT accounting_bucket FROM settlement_events WHERE order_id=?').bind(orderId).first<{accounting_bucket:string}>();
+    if (allocation?.accounting_bucket !== bucketFor(body)) return json({ok:false,error:'Order allocation requires reconciliation'},409);
     try {
       const updated = await env.DB.batch([
         env.DB.prepare(`UPDATE output_orders SET tx_hash=?, payer_address=?, recipient_address=?, tenant_id=?, order_status='settlement_verified', settlement_status='verified_settlement', verified_at=datetime('now') WHERE order_id=? AND tx_hash=''`).bind(txHash, payer, recipient, payer, orderId),
@@ -114,8 +122,8 @@ export async function handleBaseUsdcVerifyRoute(request: Request, env: Settlemen
   const verifiedAmount = formatAtomicToUsdc(BigInt(check.amountUnits!));
   try {
     await env.DB.batch([
-      env.DB.prepare(`INSERT INTO output_orders (order_id,output_title,tier_name,price_usdc,delivery_mode,reinvest_target,settlement_mode,tenant_id,quoted_price_usdc,order_status,settlement_status,tx_hash,payer_address,recipient_address,delivery_status,verified_at)
-        VALUES (?,?,?,?,'OUTPUT_ONLY_NO_MODULE',?,'BASE_USDC_OPT_IN',?,?,'settlement_verified','verified_settlement',?,?,?,'locked',datetime('now'))`).bind(orderId, `${domain} ${mode} transfer`, mode, amount, domain, payer, amount, txHash, payer, recipient),
+      env.DB.prepare(`INSERT INTO output_orders (order_id,tier_code,output_slug,output_title,tier_name,price_usdc,delivery_mode,reinvest_target,settlement_mode,tenant_id,quoted_price_usdc,order_status,settlement_status,tx_hash,payer_address,recipient_address,delivery_status,verified_at)
+        VALUES (?,?,?,?,?,?,'OUTPUT_ONLY_NO_MODULE',?,'BASE_USDC_OPT_IN',?,?,'settlement_verified','verified_settlement',?,?,?,'locked',datetime('now'))`).bind(orderId, body.tierCode || '', getOutputTier(body.tierCode as string)?.outputSlug || '', `${domain} ${mode} transfer`, mode, amount, domain, payer, amount, txHash, payer, recipient),
       env.DB.prepare(`INSERT INTO settlement_events (event_id,tx_hash,chain_id,rail,source_kind,from_address,to_address,amount_usdc,order_id,token_contract,verified_amount_usdc,accounting_bucket)
         VALUES (?,?,8453,'BASE_USDC','output_order',?,?,?,?,?,?,?)`).bind(eventId, txHash, payer, recipient, verifiedAmount, orderId, BASE_NATIVE_USDC, verifiedAmount, bucketFor(body)),
     ]);
@@ -124,7 +132,7 @@ export async function handleBaseUsdcVerifyRoute(request: Request, env: Settlemen
 }
 
 function bucketFor(body: Input): string {
-  return ['wager', 'p2p', 'stake'].includes(body.mode as string) ? 'escrow' : typeof body.bucket === 'string' ? body.bucket : 'treasury';
+  return settlementBucket(body.mode as string, body.tierCode as string | undefined);
 }
 async function recordInternalOrder(body: Input, env: SettlementEnv): Promise<Response> {
   const key = body.idempotencyKey;
@@ -133,14 +141,14 @@ async function recordInternalOrder(body: Input, env: SettlementEnv): Promise<Res
   const title = `${body.domain} ${body.mode} transfer`;
   try {
     await env.DB.batch([
-      env.DB.prepare(`INSERT INTO output_orders (order_id,output_title,tier_name,price_usdc,quoted_price_usdc,delivery_mode,reinvest_target,settlement_mode,order_status,settlement_status,intake_key)
-        VALUES (?,?,?,?,?,'OUTPUT_ONLY_NO_MODULE',?,'INTERNAL_OPT_IN','recorded','unverified_internal',?)`).bind(orderId,title,body.mode,body.amountUsdc,body.amountUsdc,body.domain,key),
+      env.DB.prepare(`INSERT INTO output_orders (order_id,tier_code,output_slug,output_title,tier_name,price_usdc,quoted_price_usdc,delivery_mode,reinvest_target,settlement_mode,order_status,settlement_status,intake_key)
+        VALUES (?,?,?,?,?,?,?,'OUTPUT_ONLY_NO_MODULE',?,'INTERNAL_OPT_IN','recorded','unverified_internal',?)`).bind(orderId,body.tierCode || '',getOutputTier(body.tierCode as string)?.outputSlug || '',title,body.mode,body.amountUsdc,body.amountUsdc,body.domain,key),
       env.DB.prepare(`INSERT INTO settlement_events (event_id,tx_hash,rail,source_kind,to_address,amount_usdc,order_id,accounting_bucket,escrow_status)
         VALUES (?,?,'INTERNAL_LEDGER','output_order','',?,?,?,?)`).bind(eventId,`internal:${orderId}`,body.amountUsdc,orderId,bucket,bucket === 'escrow' ? 'pending' : 'settled'),
     ]);
   } catch {
-    const prior = await env.DB.prepare(`SELECT o.order_id,o.output_title,o.price_usdc,e.accounting_bucket FROM output_orders o JOIN settlement_events e ON e.order_id=o.order_id WHERE o.intake_key=?`).bind(key).first<Record<string,string>>();
-    if (!prior || prior.output_title !== title || prior.price_usdc !== body.amountUsdc || prior.accounting_bucket !== bucket) return json({ ok:false,error:'Order conflict or ledger unavailable' },409);
+    const prior = await env.DB.prepare(`SELECT o.order_id,o.tier_code,o.output_title,o.price_usdc,e.accounting_bucket FROM output_orders o JOIN settlement_events e ON e.order_id=o.order_id WHERE o.intake_key=?`).bind(key).first<Record<string,string>>();
+    if (!prior || prior.tier_code !== (body.tierCode || '') || prior.output_title !== title || prior.price_usdc !== body.amountUsdc || prior.accounting_bucket !== bucket) return json({ ok:false,error:'Order conflict or ledger unavailable' },409);
     return json({ok:true,verified:false,...constants,orderId:prior.order_id,bucket,duplicate:true,delivery_status:'locked'});
   }
   return json({ok:true,verified:false,...constants,orderId,eventId,bucket,delivery_status:'locked',financial_note:'Internal bookkeeping only; no payment verified or moved.'});

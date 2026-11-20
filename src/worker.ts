@@ -73,25 +73,25 @@ async function fetchFeed(url: string, label: string, scope: string, token?: stri
     return parseXml(text, label, scope);
   } catch { return []; }
 }
-async function internetFeeds(request: Request, env: Env): Promise<Response> {
+async function internetFeeds(request: Request, env: Env, privateFeeds = false): Promise<Response> {
   const url = new URL(request.url);
   const scope = (url.searchParams.get('scope') || 'ALL').trim().slice(0, 80);
-  const cacheKey = `internet_feeds:${scope.toLowerCase()}`;
-  if (env.KV_BINDING) {
+  const cacheKey = `public_internet_feeds_v2:${scope.toLowerCase()}`;
+  if (env.KV_BINDING && !privateFeeds) {
     try { const cached = await env.KV_BINDING.get(cacheKey, 'json'); if (cached) return json({ ok: true, cached: true, ...(cached as object) }); } catch { /* Cache is an optimization, not a dependency. */ }
   }
   const sources: Array<{ url: string; label: string; scope: string; token?: string }> = [];
-  if (env.PRIVATE_WWW_FEED_URL && validFeedUrl(env.PRIVATE_WWW_FEED_URL)) sources.push({ url: env.PRIVATE_WWW_FEED_URL, label: 'private_www', scope: 'MAX-INSTITUTE', token: env.PRIVATE_WWW_FEED_TOKEN });
+  if (privateFeeds && env.PRIVATE_WWW_FEED_URL) sources.push({url:env.PRIVATE_WWW_FEED_URL,label:'private_www',scope:'MAX-INSTITUTE',token:env.PRIVATE_WWW_FEED_TOKEN});
   if (env.PUBLIC_FEEDS_JSON) {
     try {
       const entries = JSON.parse(env.PUBLIC_FEEDS_JSON) as Array<{ url?: string; label?: string; scope?: string }>;
-      if (Array.isArray(entries)) for (const entry of entries.slice(0, 20)) if (entry.url && validFeedUrl(entry.url)) sources.push({ url: entry.url, label: (entry.label || 'web_feed').slice(0, 80), scope: (entry.scope || 'MAX-INTERNET').slice(0, 80) });
+      if (Array.isArray(entries)) for (const entry of entries.slice(0, 20)) if (entry.url && entry.url !== env.PRIVATE_WWW_FEED_URL && validFeedUrl(entry.url)) sources.push({ url: entry.url, label: (entry.label || 'web_feed').slice(0, 80), scope: (entry.scope || 'MAX-INTERNET').slice(0, 80) });
     } catch { /* Ignore malformed optional configuration. */ }
   }
   const remote = (await Promise.all(sources.map(source => fetchFeed(source.url, source.label, source.scope, source.token)))).flat();
   const items = remote.filter(item => scope === 'ALL' || (item.scope || '').toLowerCase() === scope.toLowerCase());
   const payload = { scope, count: items.length, items, wallet_required: false, updated_at: new Date().toISOString(), source: items.length ? 'configured_feeds' : 'local_seed_fallback', ...(!items.length ? fallback : {}) };
-  if (env.KV_BINDING) { try { await env.KV_BINDING.put(cacheKey, JSON.stringify(payload), { expirationTtl: 180 }); } catch { /* Continue without cache. */ } }
+  if (env.KV_BINDING && !privateFeeds) { try { await env.KV_BINDING.put(cacheKey, JSON.stringify(payload), { expirationTtl: 180 }); } catch { /* Continue without cache. */ } }
   return json({ ok: true, cached: false, ...payload });
 }
 
@@ -152,6 +152,8 @@ export { AdminSessionDO, BEEMAXSecureNodeRegistryDO, NodeRegistryDO };
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    const namespaces = [...url.searchParams.getAll('namespace'), request.headers.get('x-target-namespace')];
+    if (namespaces.some(namespace => namespace && forbiddenNamespace(namespace, env.OPERATOR_NAMESPACE))) return json({ ok: false, error: 'Forbidden: OPERATOR_NAMESPACE cannot be accessed through tenant router.' }, 403);
     const chainId = Number(env.BASE_CHAIN_ID || BASE_CHAIN_ID);
     const usdc = env.BASE_USDC_ADDRESS || BASE_USDC;
     if (url.pathname === '/' && request.method === 'GET') return json({ service: 'MAX-INTERNET Gateway', portal: 'BEEMAX-PORTAL-OS1', public_access: 'free', wallet_mode: 'opt-in', chain_id: chainId, usdc_address: usdc, release_anchor: { release_id: env.RELEASE_ANCHOR_ID || RELEASE_ID, title: 'The Crown of Return', price_usdc: '30.00', editions: 500, cover_asset: '/assets/crown-cover.png' }, storage_stack: ['Cloudflare Workers', 'D1', 'KV', 'Durable Objects (SQLite)'], excluded_rails: ['R2', 'Stripe', 'Bitcoin'], write_performed: false });
@@ -163,10 +165,13 @@ export default {
     }
     if (url.pathname === '/api/gateway/health' && request.method === 'GET') return json({ ok: true, gateway: 'MAX-INTERNET', chain_id: chainId, usdc_address: usdc, wallet_mode: 'opt-in', isolation_enforced: true });
     if (url.pathname === '/api/portal/feeds' && request.method === 'GET') return json({ ok: true, ...fallback, source: 'local_seed_fallback' });
+    if (url.pathname === '/api/admin/internet-feeds' && request.method === 'GET') {
+      const auth = await app.fetch(new Request(new URL('/api/auth/command-session', url), {headers:request.headers}), env, ctx);
+      if (!auth.ok) return auth;
+      return internetFeeds(request, env, true);
+    }
     if (url.pathname === '/api/internet-feeds' && request.method === 'GET') return internetFeeds(request, env);
 
-    const namespaces = [url.searchParams.get('namespace'), request.headers.get('x-target-namespace')];
-    if (namespaces.some(namespace => namespace && forbiddenNamespace(namespace, env.OPERATOR_NAMESPACE))) return json({ ok: false, error: 'Forbidden: OPERATOR_NAMESPACE cannot be accessed through tenant router.' }, 403);
     if (url.pathname === '/api/settlements/base-usdc/quote') return handleBaseUsdcQuoteRoute(request, env);
     if (['/api/settlements/base-usdc/verify', '/api/settlements/base-usdc/intake'].includes(url.pathname)) return handleBaseUsdcVerifyRoute(request, env);
     const match = url.pathname.match(/^\/api\/tenant\/([^/]+)\/(state|ledger|modules\/[a-z0-9-]+)$/);
@@ -176,6 +181,7 @@ export default {
       const id = tenantId(decoded);
       if (!id || forbiddenNamespace(id, env.OPERATOR_NAMESPACE)) return json({ ok: false, error: 'Invalid tenant ID.' }, 403);
       if (request.method === 'POST' && request.headers.get('origin') && request.headers.get('origin') !== url.origin) return json({ ok: false, error: 'Cross-origin writes are not allowed.' }, 403);
+      if (!match[2].startsWith('modules/')) return json({ok:false,error:'Public ledger access is disabled'},403);
       const stub = env.TENANT_BEEMAX_DO.get(env.TENANT_BEEMAX_DO.idFromName(`tenant:${id}`));
       const headers = new Headers(request.headers); headers.set('x-tenant-id', id); headers.delete('x-target-namespace');
       const path = `/${match[2]}`;

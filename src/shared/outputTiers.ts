@@ -57,3 +57,9 @@ export const OUTPUT_TIERS: readonly OutputTierOption[] = [
 export function getOutputTier(tierCode: string): OutputTierOption | undefined {
   return OUTPUT_TIERS.find((tier) => tier.id === tierCode);
 }
+
+/** Server-owned allocation for explicit opt-ins. */
+export function settlementBucket(mode: string, tierCode?: string): 'treasury' | 'escrow' | 'reallocation' {
+  if (['stake', 'wager', 'p2p'].includes(mode)) return 'escrow';
+  return mode === 'paid-tier' && getOutputTier(tierCode || '')?.reinvestTarget === 'MAX-ECOSYSTEM' ? 'reallocation' : 'treasury';
+}

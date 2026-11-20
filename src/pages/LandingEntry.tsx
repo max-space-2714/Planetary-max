@@ -98,7 +98,7 @@ export const LandingEntry: React.FC = () => {
                 cursor: "pointer",
               }}
             >
-              Base USDC Output Tier (1.000000 USDC)
+              Approved Base USDC Output Tiers
             </button>
           </div>
 
@@ -117,7 +117,7 @@ export const LandingEntry: React.FC = () => {
               ? "Active: 0.000000 USDC free preview • Wallet-free browsing & pre-limit previews for MAX-ART, MAX-GAMES, MAX-CHESS, MAX-SPORTS, MAX-MEDIA & MAX-SPACES • MAX Compute: 0.000000"
               : optedIn
               ? "Active: Opt-in Base Mainnet (8453) native USDC (0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913) • Outputs Only"
-              : "Opt in to BEEMAX (Base 8453) first to select the 1.000000 USDC tier; free previews stay available at 0.000000 USDC."}
+              : "Opt in to BEEMAX (Base 8453) first to select an approved output tier; free previews stay available at 0.000000 USDC."}
           </div>
         </section>
         <BeemaxSpaceConcierge optedInBaseUsdc={optedIn} />

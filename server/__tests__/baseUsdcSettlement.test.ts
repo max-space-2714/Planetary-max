@@ -76,11 +76,12 @@ it('rolls back the order if recording its event fails',async()=>{
 
 it('accepts wallet-free intake without chain configuration, with atomic idempotency and bucket routing',async()=>{
   const e=env();delete e.SETTLEMENT_RECIPIENT_ADDRESS;
-  const body={optedIn:true,amountUsdc:'2.000001',mode:'paid-tier',idempotencyKey:'k'.repeat(32)};
+  const body={optedIn:true,amountUsdc:'5.000000',mode:'paid-tier',tierCode:'tier_std_5',idempotencyKey:'k'.repeat(32)};
   expect((await verify(req(body),e)).status).toBe(200);
   expect(await (await verify(req(body),e)).json()).toMatchObject({duplicate:true,verified:false,bucket:'treasury'});
-  expect((await verify(req({...body,amountUsdc:'3'}),e)).status).toBe(409);
-  for(const [mode,bucket] of [['wager','escrow'],['paid-tier','reallocation']]) expect(await (await verify(req({...body,mode,bucket,idempotencyKey:crypto.randomUUID()}),e)).json()).toMatchObject({bucket});
+  expect((await verify(req({...body,amountUsdc:'3'}),e)).status).toBe(400);
+  expect((await verify(req({...body,tierCode:'tier_ext_15',amountUsdc:'15'}),e)).status).toBe(409);
+  for(const [mode,bucket] of [['wager','escrow'],['paid-tier','reallocation']]) expect(await (await verify(req({...body,mode,bucket,tierCode:mode==='paid-tier'?'tier_ext_15':undefined,amountUsdc:mode==='paid-tier'?'15':'5',idempotencyKey:crypto.randomUUID()}),e)).json()).toMatchObject({bucket});
   expect(db.prepare('SELECT count(*) n FROM output_orders').get()?.n).toBe(3);
   expect(requests).toEqual([]);
 });
@@ -119,14 +120,14 @@ it('provides native USDC transfer instructions only for a configured wallet with
 it('records every new hub domain through D1 buckets with opt-in and duplicate protection', async () => {
   const domains = ['MAX-INSTITUTE','MAX-REALITY','MAX-FORCE','MAX-ARCHITECTURE','MAX-ECOSYSTEM'];
   for (const [index, domain] of domains.entries()) {
-    const body = { optedIn: true, domain, mode: 'paid-tier', amountUsdc: '1.000001', idempotencyKey: crypto.randomUUID(), bucket: index % 2 ? 'reallocation' : 'treasury' };
+    const body = { optedIn: true, domain, mode: 'paid-tier', amountUsdc: index % 2 ? '15.000000':'5.000000', tierCode:index % 2 ? 'tier_ext_15':'tier_std_5', idempotencyKey: crypto.randomUUID(), bucket: index % 2 ? 'reallocation' : 'treasury' };
     expect((await verify(req({...body, optedIn:false}),env())).status).toBe(400);
     const first = await (await verify(req(body),env())).json();
     expect(first).toMatchObject({ok:true, verified:false, bucket:body.bucket, delivery_status:'locked'});
     const retry = await (await verify(req(body),env())).json();
     expect(retry).toMatchObject({ok:true,duplicate:true,orderId:first.orderId});
     expect((await verify(req({...body, domain:'MAX-SPACES'}),env())).status).toBe(409);
-    const stake = await (await verify(req({...body, mode:'stake', idempotencyKey:crypto.randomUUID()}),env())).json();
+    const stake = await (await verify(req({...body, mode:'stake',tierCode:undefined,bucket:'escrow', idempotencyKey:crypto.randomUUID()}),env())).json();
     expect(stake).toMatchObject({ok:true,bucket:'escrow'});
   }
   expect(db.prepare('SELECT count(*) n FROM settlement_events').get()?.n).toBe(10);
@@ -134,16 +135,17 @@ it('records every new hub domain through D1 buckets with opt-in and duplicate pr
   expect(requests).toEqual([]);
 });
 it('accepts a signed Base USDC receipt for a new hub module without replay', async () => {
-  const body = {...input(), domain:'MAX-REALITY',mode:'paid-tier'};
+  const body = {...input(), domain:'MAX-REALITY',mode:'paid-tier',tierCode:'tier_std_5',amountUsdc:'5.000000'};
+  receipt.logs[0].data='0x4c4b40';
   body.signature = await wallet.signMessage({message:baseUsdcSettlementMessage('https://max.test',body)});
   expect(await (await verify(req(body),env())).json()).toMatchObject({ok:true,verified:true});
-  expect(db.prepare('SELECT accounting_bucket,amount_usdc FROM settlement_events').get()).toMatchObject({accounting_bucket:'treasury',amount_usdc:'1.000000'});
+  expect(db.prepare('SELECT accounting_bucket,amount_usdc FROM settlement_events').get()).toMatchObject({accounting_bucket:'treasury',amount_usdc:'5.000000'});
   expect((await verify(req(body),env())).status).toBe(409);
 });
 
 it('records ICV opt-ins idempotently in the selected D1 bucket', async () => {
   for (const [mode, bucket] of [['paid-tier','treasury'],['paid-tier','reallocation'],['stake','escrow']] as const) {
-    const body = {optedIn:true,domain:'ICVS',mode,bucket,amountUsdc:'1.000001',idempotencyKey:crypto.randomUUID()};
+    const body = {optedIn:true,domain:'ICVS',mode,bucket,tierCode:mode==='paid-tier'?(bucket==='treasury'?'tier_std_5':'tier_ext_15'):undefined,amountUsdc:mode==='paid-tier'?(bucket==='treasury'?'5':'15'):'1.000001',idempotencyKey:crypto.randomUUID()};
     expect((await verify(req({...body,optedIn:false}),env())).status).toBe(400);
     const first = await (await verify(req(body),env())).json();
     expect(first).toMatchObject({ok:true,verified:false,bucket,delivery_status:'locked'});
@@ -152,4 +154,12 @@ it('records ICV opt-ins idempotently in the selected D1 bucket', async () => {
   expect(db.prepare('SELECT count(*) n FROM settlement_events').get()?.n).toBe(3);
   expect(db.prepare("SELECT count(*) n FROM output_orders WHERE reinvest_target='ICVS'").get()?.n).toBe(3);
   expect(requests).toEqual([]);
+});
+
+it('enforces catalog price, tier and allocation before recording or verifying',async()=>{
+ const body={optedIn:true,domain:'MAX-SPORTS',mode:'paid-tier',tierCode:'tier_std_5',amountUsdc:'5',idempotencyKey:crypto.randomUUID()};
+ for(const patch of [{amountUsdc:'1'},{tierCode:'unknown'},{tierCode:undefined},{bucket:'reallocation'}]) expect((await verify(req({...body,...patch}),env())).status).toBe(400);
+ expect((await verify(req(body),env())).status).toBe(200);
+ expect(db.prepare('SELECT tier_code,output_slug FROM output_orders').get()).toMatchObject({tier_code:'tier_std_5',output_slug:'sports_standard_research_brief'});
+ expect((await quote(new Request('https://max.test/api/settlements/base-usdc/quote?namespace=public&namespace=OPERATOR_NAMESPACE',{method:'POST',headers:{Origin:'https://max.test'},body:JSON.stringify(body)}),env())).status).toBe(403);
 });
