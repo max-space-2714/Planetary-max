@@ -3,13 +3,10 @@ const json = (body: unknown, status = 200) => Response.json(body, {status, heade
 export async function handleTreasury(request: Request, db: D1Database): Promise<Response> {
   const path = new URL(request.url).pathname;
   if (request.method === 'GET' && path === '/api/admin/treasury') {
-    const {results} = await db.prepare("SELECT accounting_bucket,amount_usdc FROM settlement_events WHERE accounting_bucket IN ('treasury','escrow','reallocation')").all<{accounting_bucket:string;amount_usdc:string}>();
-    const totals: Record<string,bigint> = {treasury:0n,escrow:0n,reallocation:0n};
-    for (const row of results) totals[row.accounting_bucket] += parseUsdcToAtomic(row.amount_usdc) ?? 0n;
-    const {results: releases} = await db.prepare('SELECT release_id,CAST(amount_atomic AS TEXT) amount_atomic,destination,reference,recorded_at FROM treasury_releases ORDER BY recorded_at DESC').all<{amount_atomic:string}>();
-    for (const release of releases) totals.treasury -= BigInt(release.amount_atomic);
+    const {totals, commitments} = await balances(db);
+    const {results: releases} = await db.prepare('SELECT release_id,CAST(amount_atomic AS TEXT) amount_atomic,destination,reference,recorded_at FROM treasury_releases ORDER BY recorded_at DESC').all();
     const destination = await db.prepare('SELECT destination FROM treasury_destination WHERE id=1').first<{destination:string}>();
-    return json({ok:true,totals:Object.fromEntries(Object.entries(totals).map(([k,v])=>[k,formatAtomicToUsdc(v)])),destination:destination?.destination ?? '',releases,maxCompute:'0.000000',financial_note:'Internal bookkeeping only. Release records do not execute or prove external payments.'});
+    return json({ok:true,totals:Object.fromEntries(Object.entries(totals).map(([k,v])=>[k,formatAtomicToUsdc(v)])),commitments:formatTotals(commitments),destination:destination?.destination ?? '',releases,maxCompute:'0.000000',financial_note:'Internal bookkeeping only. Release records do not execute or prove external payments.'});
   }
   if (request.method !== 'POST') return json({error:'Method not allowed'},405);
   if (request.headers.get('Origin') !== new URL(request.url).origin) return json({error:'Same-origin request required'},403);
@@ -24,13 +21,33 @@ export async function handleTreasury(request: Request, db: D1Database): Promise<
   if (path !== '/api/admin/treasury/releases') return json({error:'Not found'},404);
   const amount = typeof body.amountUsdc === 'string' ? parseUsdcToAtomic(body.amountUsdc) : null;
   if (!amount || amount > BigInt(Number.MAX_SAFE_INTEGER) || typeof body.reference !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(body.reference)) return json({error:'Invalid amount or release reference'},400);
-  // One conditional INSERT serializes the balance check and debit in D1, including concurrent requests.
+  // Read a revision before the snapshot. Every source/destination/release mutation
+  // advances it; the conditional insert fails if anything changed in between.
+  const revision = await db.prepare('SELECT version FROM treasury_revision WHERE id=1').first<{version:number}>();
+  const {totals} = await balances(db);
+  if (amount > totals.treasury) return json({error:'Insufficient verified treasury balance'},409);
   try {
     const result = await db.prepare(`INSERT INTO treasury_releases (release_id,amount_atomic,destination,reference)
-      SELECT ?,?,destination,? FROM treasury_destination WHERE id=1 AND
-      ? <= COALESCE((SELECT SUM(CAST(REPLACE(amount_usdc,'.','') AS INTEGER)) FROM settlement_events WHERE accounting_bucket='treasury'),0)
-        - COALESCE((SELECT SUM(amount_atomic) FROM treasury_releases),0)`).bind(crypto.randomUUID(),Number(amount),body.reference,Number(amount)).run();
-    if (!result.meta.changes) return json({error:'Destination required or insufficient treasury balance'},409);
+      SELECT ?,?,destination,? FROM treasury_destination WHERE id=1
+      AND (SELECT version FROM treasury_revision WHERE id=1)=?`).bind(crypto.randomUUID(),Number(amount),body.reference,revision?.version).run();
+    if (!result.meta.changes) return json({error:'Destination missing or ledger changed; retry with the same reference'},409);
   } catch { return json({error:'Release reference already recorded or ledger unavailable'},409); }
   return json({ok:true,recorded:true,payment_executed:false});
+}
+
+const formatTotals = (totals: Record<string,bigint>) => Object.fromEntries(Object.entries(totals).map(([k,v])=>[k,formatAtomicToUsdc(v)]));
+async function balances(db: D1Database) {
+  const totals: Record<string,bigint> = {treasury:0n,escrow:0n,reallocation:0n};
+  const commitments = {...totals};
+  const {results} = await db.prepare(`SELECT accounting_bucket,amount_usdc,1 funded FROM treasury_funding
+    UNION ALL SELECT accounting_bucket,amount_usdc,0 funded FROM settlement_events
+    WHERE rail='INTERNAL_LEDGER' AND accounting_bucket IN ('treasury','escrow','reallocation')`).all<{accounting_bucket:string;amount_usdc:string;funded:number}>();
+  for (const row of results) {
+    const amount = parseUsdcToAtomic(row.amount_usdc);
+    if (amount === null) throw new Error('Invalid ledger amount; reconciliation required');
+    (row.funded ? totals : commitments)[row.accounting_bucket] += amount;
+  }
+  const {results: releases} = await db.prepare('SELECT CAST(amount_atomic AS TEXT) amount_atomic FROM treasury_releases').all<{amount_atomic:string}>();
+  for (const row of releases) totals.treasury -= BigInt(row.amount_atomic);
+  return {totals,commitments};
 }

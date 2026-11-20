@@ -155,7 +155,7 @@ export const BeemaxUnifiedOutputHub: React.FC = () => {
             cursor: "pointer",
           }}
         >
-          Base USDC Output Tier (1.000000 USDC)
+          Approved Base USDC Output Tiers
         </button>
       </div>
 
@@ -228,8 +228,8 @@ export const BeemaxUnifiedOutputHub: React.FC = () => {
           {tier === "free"
             ? "Free Output Preview (0.000000 USDC) • No wallet required"
             : optInBaseUsdc
-            ? "Base USDC Output Tier (1.000000 USDC on Base 8453, 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913)"
-            : "Select Opt In to BEEMAX (Base 8453) to use the 1.000000 USDC tier"}
+            ? "Base USDC Output Tier (catalog prices on Base 8453, 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913)"
+            : "Select Opt In to BEEMAX (Base 8453) to use an approved output tier"}
         </p>
 
 

@@ -1,3 +1,5 @@
+import { formatAtomicToUsdc } from './verify-base-usdc';
+import { reconcileArtworkFunding } from './treasury-reconciliation';
 import { Hono } from 'hono';
 import { handleTreasury } from './treasury';
 import { verifyBaseTransfer } from './base-settlement';
@@ -255,6 +257,9 @@ app.post('/api/checkout/verify-usdc', async (c) => {
            SELECT 1 FROM artworks WHERE id = ? AND status = 'sold' AND access_token = ?
          )`
       ).bind(artworkId, resolvedEmail, txReference, Date.now(), verifiedSender.toLowerCase(), artworkId, accessToken),
+      c.env.DB.prepare(`INSERT OR IGNORE INTO artwork_funding(tx_hash,amount_usdc)
+        SELECT ?,? WHERE EXISTS (SELECT 1 FROM transactions WHERE tx_reference=? AND buyer_wallet=?)`)
+        .bind(txReference, formatAtomicToUsdc(BigInt(verification.amountUnits)), txReference, verifiedSender.toLowerCase()),
     ]);
     const recorded = await c.env.DB.prepare("SELECT t.id FROM transactions t JOIN artworks a ON a.id=t.artwork_id WHERE a.id=? AND a.access_token=? AND a.status='sold' AND t.tx_reference=? AND t.buyer_wallet=?").bind(artworkId, accessToken, txReference, verifiedSender.toLowerCase()).first();
     if (!recorded) {
@@ -395,6 +400,7 @@ app.use('/api/admin/treasury*', async (c, next) => {
   } catch { return c.json({error:'Administrator sessions unavailable'},503); }
   return next();
 });
+app.post('/api/admin/treasury/reconcile', c => reconcileArtworkFunding(c.req.raw, c.env));
 app.get('/api/admin/treasury', c => handleTreasury(c.req.raw, c.env.DB));
 app.post('/api/admin/treasury/destination', c => handleTreasury(c.req.raw, c.env.DB));
 app.post('/api/admin/treasury/releases', c => handleTreasury(c.req.raw, c.env.DB));

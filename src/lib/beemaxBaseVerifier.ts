@@ -6,6 +6,7 @@ export const MAX_COMPUTE_VALUE = "0.000000";
 
 export interface OptInUsdcSettlementRequest {
   optedIn: true;
+  tierCode?: string;
   orderId?: string;
   idempotencyKey?: string;
   payerAddress: string;
@@ -29,6 +30,7 @@ export function rejectBlockedNamespace(value: string): boolean {
 
 export async function requestOptInUsdcQuote(params: {
   optedIn: true;
+  tierCode?: string;
   domain: OptInUsdcSettlementRequest["domain"];
   mode: OptInUsdcSettlementRequest["mode"];
   amountUsdc: string;
@@ -79,7 +81,7 @@ export async function verifyOptInUsdcSettlement(
 }
 
 export async function recordOptInOrder(params: {
-  optedIn:true; domain:OptInUsdcSettlementRequest['domain']; mode:OptInUsdcSettlementRequest['mode']; amountUsdc:string; idempotencyKey:string;
+  tierCode?:string; optedIn:true; domain:OptInUsdcSettlementRequest['domain']; mode:OptInUsdcSettlementRequest['mode']; amountUsdc:string; idempotencyKey:string;
 }): Promise<{orderId:string}> {
   const response = await fetch('/api/settlements/base-usdc/intake', {
     method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(params),

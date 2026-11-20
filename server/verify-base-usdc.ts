@@ -31,6 +31,7 @@ export function parseUsdcToAtomic(amount: string): bigint | null {
 }
 
 export function formatAtomicToUsdc(amount: bigint): string {
+  if (amount < 0n) return `-${formatAtomicToUsdc(-amount)}`;
   return `${amount / 1_000_000n}.${(amount % 1_000_000n).toString().padStart(6, '0')}`;
 }
 

@@ -47,7 +47,7 @@ export const BeemaxPortalCommandHud: React.FC = () => {
   const loadInternetFeeds = async (filter = feedFilter) => {
     setFeedError('');
     try {
-      const response = await fetch(`/api/internet-feeds?scope=${encodeURIComponent(filter)}`, {
+      const response = await fetch(`/api/admin/internet-feeds?scope=${encodeURIComponent(filter)}`, {
         headers: { Accept: 'application/json' },
       });
       const payload = await response.json() as InternetFeedsPayload;

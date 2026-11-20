@@ -1,0 +1,12 @@
+.max-everything { border: 1px solid #334155; border-radius: 14px; padding: 20px; background: linear-gradient(135deg, #111d30, #0a1322); }
+.max-everything-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.max-everything-head h2 { margin: 5px 0; color: #f8fafc; font-size: 24px; }
+.max-everything-head p { margin: 0; color: #b6c7dc; font-size: 13px; }
+.max-everything-kicker { color: #74c5ed; font-size: 10px; font-weight: 700; letter-spacing: .12em; }
+.max-everything-free { border: 1px solid #2c715f; color: #a7f3d0; border-radius: 30px; padding: 5px 10px; font-size: 11px; white-space: nowrap; }
+.max-everything-group h3 { color: #a9bdd4; margin: 20px 0 9px; font-size: 12px; }
+.max-everything-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 8px; }
+.max-everything-grid a { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; border: 1px solid #36506b; border-radius: 8px; background: #132238; color: #eef5ff; font-size: 12px; font-weight: 650; text-decoration: none; }
+.max-everything-grid a:hover, .max-everything-grid a[aria-current='page'] { border-color: #38bdf8; background: #15314b; }
+.max-everything-grid a:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 2px; }
+.max-everything-arrow { color: #7dd3fc; }
