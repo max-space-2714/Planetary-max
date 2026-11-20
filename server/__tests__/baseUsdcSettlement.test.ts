@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, it, expect, vi } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
+import { decodeFunctionData, erc20Abi } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { handleBaseUsdcQuoteRoute as quote, handleBaseUsdcVerifyRoute as verify, parseUsdcToBaseUnits, BASE_NATIVE_USDC } from '../baseUsdcSettlement';
 import { baseUsdcSettlementMessage } from '../../src/shared/baseUsdcSettlementMessage';
@@ -17,14 +18,14 @@ const input = () => ({ optedIn:true, chainId:8453, domain:'MAX-SPORTS', mode:'wa
 const req = (body: unknown, origin = 'https://max.test') => new Request('https://max.test/api/settlements/base-usdc/verify', { method:'POST', headers:{Origin:origin,'Content-Type':'application/json'}, body:JSON.stringify(body) });
 function statement(sql:string) {
   let values: any[] = [];
-  return { bind(...args:any[]) { values=args; return this; }, async run(){ return {meta:db.prepare(sql).run(...values)}; } };
+  return { bind(...args:any[]) { values=args; return this; }, async first(){return db.prepare(sql).get(...values) ?? null;}, async all(){return {results:db.prepare(sql).all(...values)};}, async run(){ const result=db.prepare(sql).run(...values); return {meta:{changes:Number(result.changes)}}; } };
 }
 const env = () => ({ SETTLEMENT_RECIPIENT_ADDRESS:recipient, RPC_URL:'https://rpc.test', DB:{ prepare:statement, async batch(stmts:any[]){db.exec('BEGIN');try{const result=[];for(const s of stmts)result.push(await s.run());db.exec('COMMIT');return result;}catch(e){db.exec('ROLLBACK');throw e;}} } }) as any;
 beforeEach(async()=>{
   db=new DatabaseSync(':memory:');
   const commerce=readFileSync('migrations/0020_direct_digital_commerce.sql','utf8');
   db.exec(commerce.match(/CREATE TABLE settlement_claims \([\s\S]*?\);/)![0]);
-  for(const file of ['0022_max_finance_sovereign.sql','0024_sports_output_orders.sql','0025_output_order_settlement.sql','0026_output_receipt_claim_guards.sql']) db.exec(readFileSync(`migrations/${file}`,'utf8'));
+  for(const file of ['0022_max_finance_sovereign.sql','0024_sports_output_orders.sql','0025_output_order_settlement.sql','0026_output_receipt_claim_guards.sql','0027_wallet_optional_treasury.sql']) db.exec(readFileSync(`migrations/${file}`,'utf8'));
   signature=await wallet.signMessage({message:baseUsdcSettlementMessage('https://max.test',input())});
   chain='0x2105'; requests=[];
   receipt={status:'0x1',blockNumber:'0x10',logs:[{address:BASE_NATIVE_USDC,topics:['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',topic(wallet.address),topic(recipient)],data:'0x0f4240'}]};
@@ -71,4 +72,71 @@ it('guards receipt reuse across catalogs in both directions',async()=>{
 it('rolls back the order if recording its event fails',async()=>{
   db.exec("CREATE TRIGGER fail_event BEFORE INSERT ON settlement_events BEGIN SELECT RAISE(ABORT,'test failure'); END");
   expect((await verify(req(input()),env())).status).toBe(409);expect(db.prepare('SELECT count(*) n FROM output_orders').get()?.n).toBe(0);
+});
+
+it('accepts wallet-free intake without chain configuration, with atomic idempotency and bucket routing',async()=>{
+  const e=env();delete e.SETTLEMENT_RECIPIENT_ADDRESS;
+  const body={optedIn:true,amountUsdc:'2.000001',mode:'paid-tier',idempotencyKey:'k'.repeat(32)};
+  expect((await verify(req(body),e)).status).toBe(200);
+  expect(await (await verify(req(body),e)).json()).toMatchObject({duplicate:true,verified:false,bucket:'treasury'});
+  expect((await verify(req({...body,amountUsdc:'3'}),e)).status).toBe(409);
+  for(const [mode,bucket] of [['wager','escrow'],['paid-tier','reallocation']]) expect(await (await verify(req({...body,mode,bucket,idempotencyKey:crypto.randomUUID()}),e)).json()).toMatchObject({bucket});
+  expect(db.prepare('SELECT count(*) n FROM output_orders').get()?.n).toBe(3);
+  expect(requests).toEqual([]);
+});
+it('attaches a receipt later without double crediting the internal event',async()=>{
+  const body={optedIn:true,domain:'MAX-SPORTS',mode:'wager',amountUsdc:'1',idempotencyKey:crypto.randomUUID()};
+  const recorded=await (await verify(req(body),env())).json();
+  expect((await verify(req({...input(),orderId:recorded.orderId,idempotencyKey:'wrong'}),env())).status).toBe(409);
+  expect((await verify(req({...input(),orderId:recorded.orderId,idempotencyKey:body.idempotencyKey}),env())).status).toBe(200);
+  expect(db.prepare('SELECT count(*) n FROM settlement_events').get()?.n).toBe(1);
+  expect(db.prepare('SELECT tx_hash,accounting_bucket,verified_amount_usdc FROM settlement_events').get()).toMatchObject({tx_hash:hash,accounting_bucket:'escrow',verified_amount_usdc:'1.000000'});
+});
+
+it('uses a wallet saved later in Portal-OS1 for optional receipt verification',async()=>{
+  const e=env();delete e.SETTLEMENT_RECIPIENT_ADDRESS;
+  db.prepare('INSERT INTO treasury_destination(id,destination) VALUES (1,?)').run(recipient);
+  expect((await verify(req(input()),e)).status).toBe(200);
+});
+
+it('provides native USDC transfer instructions only for a configured wallet without writing',async()=>{
+  const e=env();
+  const response=await quote(req({...input(),amountUsdc:'1.000001'}),e);
+  const body=await response.json();
+  expect(body.payment).toMatchObject({to:BASE_NATIVE_USDC,recipient:recipient.toLowerCase(),value:'0x0'});
+  expect(decodeFunctionData({abi:erc20Abi,data:body.payment.data})).toMatchObject({functionName:'transfer',args:[recipient,1000001n]});
+  expect(db.prepare('SELECT count(*) n FROM output_orders').get()?.n).toBe(0);
+  expect(requests).toEqual([]);
+  delete e.SETTLEMENT_RECIPIENT_ADDRESS;
+  expect(await (await quote(req(input()),e)).json()).toMatchObject({ok:true,payment:null});
+  db.prepare('INSERT INTO treasury_destination(id,destination) VALUES (1,?)').run(recipient);
+  expect(await (await quote(req(input()),e)).json()).toMatchObject({payment:{recipient:recipient.toLowerCase()}});
+  db.prepare('UPDATE treasury_destination SET destination=?').run('payout-reference');
+  expect(await (await quote(req(input()),e)).json()).toMatchObject({ok:true,payment:null});
+});
+
+
+it('records every new hub domain through D1 buckets with opt-in and duplicate protection', async () => {
+  const domains = ['MAX-INSTITUTE','MAX-REALITY','MAX-FORCE','MAX-ARCHITECTURE','MAX-ECOSYSTEM'];
+  for (const [index, domain] of domains.entries()) {
+    const body = { optedIn: true, domain, mode: 'paid-tier', amountUsdc: '1.000001', idempotencyKey: crypto.randomUUID(), bucket: index % 2 ? 'reallocation' : 'treasury' };
+    expect((await verify(req({...body, optedIn:false}),env())).status).toBe(400);
+    const first = await (await verify(req(body),env())).json();
+    expect(first).toMatchObject({ok:true, verified:false, bucket:body.bucket, delivery_status:'locked'});
+    const retry = await (await verify(req(body),env())).json();
+    expect(retry).toMatchObject({ok:true,duplicate:true,orderId:first.orderId});
+    expect((await verify(req({...body, domain:'MAX-SPACES'}),env())).status).toBe(409);
+    const stake = await (await verify(req({...body, mode:'stake', idempotencyKey:crypto.randomUUID()}),env())).json();
+    expect(stake).toMatchObject({ok:true,bucket:'escrow'});
+  }
+  expect(db.prepare('SELECT count(*) n FROM settlement_events').get()?.n).toBe(10);
+  expect(db.prepare('SELECT count(*) n FROM output_orders').get()?.n).toBe(10);
+  expect(requests).toEqual([]);
+});
+it('accepts a signed Base USDC receipt for a new hub module without replay', async () => {
+  const body = {...input(), domain:'MAX-REALITY',mode:'paid-tier'};
+  body.signature = await wallet.signMessage({message:baseUsdcSettlementMessage('https://max.test',body)});
+  expect(await (await verify(req(body),env())).json()).toMatchObject({ok:true,verified:true});
+  expect(db.prepare('SELECT accounting_bucket,amount_usdc FROM settlement_events').get()).toMatchObject({accounting_bucket:'treasury',amount_usdc:'1.000000'});
+  expect((await verify(req(body),env())).status).toBe(409);
 });

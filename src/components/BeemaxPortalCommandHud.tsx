@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import './BeemaxPortalCommandHud.css';
+import TreasuryControls from '../modules/admin/TreasuryControls';
 import BeemaxOperatorResearchPanel from './BeemaxOperatorResearchPanel';
 
 type ScopeKey = 'BEEMAX' | 'MAX-ECOSYSTEM' | 'MAX-INSTITUTE' | 'MAX-MEDIA' | 'MAX-SPORTS' | 'MAX-CHESS' | 'MAX-SPACES' | 'Instant Digital Space' | 'MAX-COMPUTE' | 'P2P-COMPUTE' | 'MAX-FINANCE' | 'MAX-SOVEREIGN';
@@ -120,7 +121,7 @@ export const BeemaxPortalCommandHud: React.FC = () => {
         <p>Active Scope: <strong>{scope}</strong> | Wallet Mode: <strong>{walletOptInRequested ? 'Opt-In Requested' : 'Wallet-Free Default'}</strong></p>
         <button type="button" onClick={() => setWalletOptInRequested(value => !value)}>{walletOptInRequested ? 'Return to Wallet-Free Mode' : 'Opt-In Wallet (When Ready)'}</button>
       </header>
-      <BeemaxOperatorResearchPanel />
+      <TreasuryControls/><BeemaxOperatorResearchPanel />
       <nav aria-label="Portal Scopes">{SCOPES.map(item => <button key={item} type="button" onClick={() => setScope(item)}>{item}</button>)}</nav>
       <section><h2>Release Anchor &amp; Cover Asset</h2><p>The Crown of Return (<code>{RELEASE_ID}</code>) — 30.00 USDC — 500 editions</p><img src="/assets/crown-cover.png" alt="The Crown of Return Cover" width={160} height={220} /></section>
       <section><h2>MAX-INSTITUTE Gateways (G1–G7)</h2><select value={gateway} onChange={event => setGateway(event.target.value)}>{GATEWAYS.map(item => <option key={item}>{item}</option>)}</select></section>

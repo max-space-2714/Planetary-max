@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { handleTreasury } from './treasury';
 import { verifyBaseTransfer } from './base-settlement';
 import { registerPaymentReviews } from './payment-reviews';
 import { registerDigitalCheckout } from './digital-checkout';
@@ -384,6 +385,20 @@ app.get('/api/auth/command-session', async (c, next) => {
   return requireAdmin(c, next);
 }, c => c.json({ authenticated: true }));
 app.use('/api/admin/*', requireAdmin);
+// Treasury always requires a server-verified AdminSessionDO, including JWT deployments.
+app.use('/api/admin/treasury*', async (c, next) => {
+  c.header('Cache-Control', 'no-store');
+  const token = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '') || getCookie(c, 'max_admin') || '';
+  try {
+    const result = await sessionRequest(c.env, token, 'verify');
+    if (!result.ok) return c.json({error:'Administrator session required'},401);
+  } catch { return c.json({error:'Administrator sessions unavailable'},503); }
+  return next();
+});
+app.get('/api/admin/treasury', c => handleTreasury(c.req.raw, c.env.DB));
+app.post('/api/admin/treasury/destination', c => handleTreasury(c.req.raw, c.env.DB));
+app.post('/api/admin/treasury/releases', c => handleTreasury(c.req.raw, c.env.DB));
+
 app.get('/api/admin/session', (c) => c.json({ authenticated: true }));
 app.post('/api/admin/logout', async (c) => {
   if (dashboardPassword(c.env)) {

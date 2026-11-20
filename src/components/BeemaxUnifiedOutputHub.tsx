@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { HUB_MODULES, type HubModuleId } from "../shared/hubModules";
 
 type ModuleKey =
   | "max-spaces"
@@ -6,7 +7,8 @@ type ModuleKey =
   | "max-chess"
   | "max-art"
   | "max-games"
-  | "max-media";
+  | "max-media"
+  | HubModuleId;
 
 const MODULES: Record<
   ModuleKey,
@@ -17,6 +19,7 @@ const MODULES: Record<
     summary: string;
   }
 > = {
+  ...Object.fromEntries(HUB_MODULES.map(module => [module.id, {tab: module.title, title: `${module.title} Output`, mode: "OUTPUT-ONLY PREVIEW", summary: module.summary}])) as Record<HubModuleId, {tab: string; title: string; mode: string; summary: string}>,
   "max-spaces": {
     tab: "MAX-SPACES",
     title: "MAX-SPACES Output",
