@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import BeemaxSpaceConcierge from "../components/BeemaxSpaceConcierge";
 
 export const LandingEntry: React.FC = () => {
   const [optedIn, setOptedIn] = useState(false);
@@ -39,14 +40,14 @@ export const LandingEntry: React.FC = () => {
               </h1>
               <p style={{ margin: "6px 0 0", fontSize: 12, color: "#94a3b8" }}>
                 MAX Compute: <strong style={{ color: "#22c55e" }}>0.000000</strong> • Base USDC
-                (8453) • Outputs Only • Zero-Write GET /
+                (8453) • Outputs Only • Zero-Write GET / • write_performed: false
               </p>
             </div>
 
             <button
               type="button"
               aria-pressed={optedIn}
-              onClick={() => setOptedIn((prev) => !prev)}
+              onClick={() => { setOptedIn((prev) => !prev); setSelectedTier("free"); }}
               style={{
                 background: optedIn ? "#0f291e" : "#111827",
                 color: optedIn ? "#4ade80" : "#e2e8f0",
@@ -84,6 +85,7 @@ export const LandingEntry: React.FC = () => {
             <button
               type="button"
               aria-pressed={selectedTier === "base-usdc"}
+              disabled={!optedIn}
               onClick={() => setSelectedTier("base-usdc")}
               style={{
                 background: selectedTier === "base-usdc" ? "#0c2d48" : "#070b14",
@@ -118,6 +120,7 @@ export const LandingEntry: React.FC = () => {
               : "Opt in to BEEMAX (Base 8453) first to select the 1.000000 USDC tier; free previews stay available at 0.000000 USDC."}
           </div>
         </section>
+        <BeemaxSpaceConcierge optedInBaseUsdc={optedIn} />
       </div>
     </main>
   );

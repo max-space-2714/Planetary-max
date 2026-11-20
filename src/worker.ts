@@ -1,7 +1,10 @@
+import { handleBaseUsdcQuoteRoute, handleBaseUsdcVerifyRoute } from '../server/baseUsdcSettlement';
 import { DurableObject } from 'cloudflare:workers';
 import app, { AdminSessionDO, BEEMAXSecureNodeRegistryDO, NodeRegistryDO } from '../server/planetary-max';
 
 interface Env {
+  RPC_URL?: string;
+  SETTLEMENT_RECIPIENT_ADDRESS: string;
   ASSETS: Fetcher;
   DB: D1Database;
   KV_BINDING?: KVNamespace;
@@ -158,6 +161,8 @@ export default {
 
     const namespace = url.searchParams.get('namespace') || request.headers.get('x-target-namespace') || '';
     if (namespace && forbiddenNamespace(namespace, env.OPERATOR_NAMESPACE)) return json({ ok: false, error: 'Forbidden: OPERATOR_NAMESPACE cannot be accessed through tenant router.' }, 403);
+    if (url.pathname === '/api/settlements/base-usdc/quote') return handleBaseUsdcQuoteRoute(request);
+    if (url.pathname === '/api/settlements/base-usdc/verify') return handleBaseUsdcVerifyRoute(request, env);
     const match = url.pathname.match(/^\/api\/tenant\/([^/]+)\/(state|ledger)$/);
     if (match) {
       let decoded = '';
