@@ -1,6 +1,6 @@
 import React, { Suspense, useEffect, useState } from 'react';
 import { CollectorVault } from './modules/art/CollectorCheckout';
-import LandingEntry from './pages/LandingEntry';
+import PortalOS1Layout from './core/PortalOS1Layout';
 
 const CommandHud = React.lazy(() => import('./components/BeemaxPortalCommandHud'));
 const AdminConsole = React.lazy(() => import('./modules/admin/PortalOS1Console'));
@@ -51,5 +51,5 @@ export default function App() {
   if (route === '/admin' || window.location.pathname.replace(/\/$/, '') === '/admin') {
     return <Suspense fallback={<p>Loading sign-in…</p>}><AdminConsole /></Suspense>;
   }
-  return <LandingEntry />;
+  return <PortalOS1Layout />;
 }

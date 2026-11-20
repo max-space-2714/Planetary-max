@@ -140,3 +140,16 @@ it('accepts a signed Base USDC receipt for a new hub module without replay', asy
   expect(db.prepare('SELECT accounting_bucket,amount_usdc FROM settlement_events').get()).toMatchObject({accounting_bucket:'treasury',amount_usdc:'1.000000'});
   expect((await verify(req(body),env())).status).toBe(409);
 });
+
+it('records ICV opt-ins idempotently in the selected D1 bucket', async () => {
+  for (const [mode, bucket] of [['paid-tier','treasury'],['paid-tier','reallocation'],['stake','escrow']] as const) {
+    const body = {optedIn:true,domain:'ICVS',mode,bucket,amountUsdc:'1.000001',idempotencyKey:crypto.randomUUID()};
+    expect((await verify(req({...body,optedIn:false}),env())).status).toBe(400);
+    const first = await (await verify(req(body),env())).json();
+    expect(first).toMatchObject({ok:true,verified:false,bucket,delivery_status:'locked'});
+    expect(await (await verify(req(body),env())).json()).toMatchObject({ok:true,duplicate:true,orderId:first.orderId});
+  }
+  expect(db.prepare('SELECT count(*) n FROM settlement_events').get()?.n).toBe(3);
+  expect(db.prepare("SELECT count(*) n FROM output_orders WHERE reinvest_target='ICVS'").get()?.n).toBe(3);
+  expect(requests).toEqual([]);
+});

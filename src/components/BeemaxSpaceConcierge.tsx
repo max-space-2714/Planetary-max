@@ -1,10 +1,11 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { BASE_CHAIN_ID, BASE_NATIVE_USDC, MAX_COMPUTE_VALUE, requestOptInUsdcQuote, recordOptInOrder, verifyOptInUsdcSettlement, type OptInUsdcSettlementRequest } from '../lib/beemaxBaseVerifier';
 
-import { HUB_MODULES, findHubModule, type HubModule, type HubModuleId } from '../shared/hubModules';
+import { HUB_MODULES, findHubModule, type HubModule, type HubModuleId, type HubPreviewId } from '../shared/hubModules';
+import './MaxEverythingNav.css';
 import { baseUsdcSettlementMessage } from '../shared/baseUsdcSettlementMessage';
 const ChessArena = React.lazy(() => import('../modules/chess/ChessArenaView'));
-export type SpaceActionId = 'sports-wager' | 'sports-predictions' | 'max-chess' | 'research-output' | 'art-media-games-store' | 'max-sovereign-options' | HubModuleId;
+export type SpaceActionId = 'sports-wager' | 'sports-predictions' | 'max-chess' | 'research-output' | 'art-media-games-store' | 'max-sovereign-options' | 'max-games' | 'max-media' | HubPreviewId;
 export interface SpaceRouteSpec {
   id: SpaceActionId;
   label: string;
@@ -16,7 +17,9 @@ export interface SpaceRouteSpec {
 }
 const PAYMENT_NOTE = 'Base Mainnet (8453) native USDC (0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913), https://mainnet.base.org. Each payment or wallet signature requires explicit approval. No automatic charges.';
 export const SPACE_ROUTES: Record<SpaceActionId, SpaceRouteSpec> = {
-  ...Object.fromEntries(HUB_MODULES.map(module => [module.id, { id: module.id, label: module.title, domain: module.domain, requiresOptInUsdc: false, freeAllowanceNote: 'Free output preview. Paid tiers require explicit opt-in.', guidance: module.summary, targetRoute: `#/spaces/${module.id}` }])) as Record<HubModuleId, SpaceRouteSpec>,
+  ...Object.fromEntries(HUB_MODULES.filter(module => module.view === 'preview').map(module => [module.id, { id: module.id, label: module.title, domain: module.domain, requiresOptInUsdc: false, freeAllowanceNote: 'Free output preview. Paid tiers require explicit opt-in.', guidance: module.summary, targetRoute: module.href }])) as Record<HubPreviewId, SpaceRouteSpec>,
+  'max-games': { id: 'max-games', label: 'MAX-GAMES', domain: 'MAX-GAMES', requiresOptInUsdc: false, freeAllowanceNote: 'Free output preview.', guidance: 'Explore game and interactive output previews.', targetRoute: '#/spaces/max-games' },
+  'max-media': { id: 'max-media', label: 'MAX-MEDIA', domain: 'MAX-MEDIA', requiresOptInUsdc: false, freeAllowanceNote: 'Free output preview.', guidance: 'Explore media and publishing output previews.', targetRoute: '#/spaces/max-media' },
   'sports-wager': {
     id: 'sports-wager', label: 'Place Sports Outcome Stake / Wager', domain: 'MAX-SPORTS', requiresOptInUsdc: true,
     freeAllowanceNote: 'Free telemetry and previews before limits; staking requires explicit Base (8453) USDC opt-in.',
@@ -210,19 +213,20 @@ export const BeemaxSpaceConcierge: React.FC<BeemaxSpaceConciergeProps> = ({ opte
     else window.location.hash = active.targetRoute;
   };
   return <section aria-label="BEEMAX MAX-SPACES Concierge" style={{ ...panel, color: '#e2e8f0' }}>
-    <h2>BEEMAX • MAX-SPACES Guided Navigator</h2>
-    <p>Output-Only Concierge • MAX Compute: <strong>0.000000</strong> • {optedInBaseUsdc ? 'Base (8453) USDC Opt-In Active' : 'Wallet-Free Preview Mode'}</p>
-    <p>Free previews and play within free limits. No automatic charges.</p>
-    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{Object.values(SPACE_ROUTES).map(spec =>
-      <button style={{ ...control, borderColor: spec.id === selectedAction ? '#38bdf8' : '#475569' }} key={spec.id} type="button" aria-pressed={spec.id === selectedAction} onClick={() => setSelectedAction(spec.id)}>{spec.label}</button>)}</div>
-    <div style={panel}>
-      <h3>{active.label} ({active.domain})</h3><p>{active.guidance}</p><p>{active.freeAllowanceNote}</p>
-      <button style={{ ...control, opacity: blocked ? 0.5 : 1 }} type="button" disabled={blocked} onClick={navigate}>{blocked ? 'Opt In to Base (8453) USDC First to Continue' : `Continue to ${active.domain}`}</button>
-      {active.id === 'art-media-games-store' && <p><a href="#/spaces/storefront">Browse free gallery previews</a></p>}
-    </div>
-    {destination && <section aria-label="Selected MAX space" style={panel}>
+    <nav className="max-everything" aria-label="Max Everything module switcher">
+      <div className="max-everything-head"><div><span className="max-everything-kicker">BEEMAX / YOUR HUB</span><h2>Max Everything</h2><p>Choose a module to open its free preview.</p></div><span className="max-everything-free">0.000000 USDC</span></div>
+      {(['core', 'open'] as const).map(group => <div className="max-everything-group" key={group}>
+        <h3>{group === 'core' ? 'MAX modules' : 'Open modules'}</h3>
+        <div className="max-everything-grid">{HUB_MODULES.filter(module => module.group === group).map(module => <a
+          key={module.id} href={module.href} aria-current={destination?.targetRoute === module.href ? 'page' : undefined}
+          onClick={event => { if (onNavigate) { const spec = Object.values(SPACE_ROUTES).find(route => route.targetRoute === module.href); if (spec) { event.preventDefault(); onNavigate(module.href, spec); } } }}>
+          <span>{module.title}</span><span className="max-everything-arrow" aria-hidden="true">↗</span>
+        </a>)}</div>
+      </div>)}
+    </nav>
+    {destination && <section aria-label="Selected MAX space" aria-live="polite" style={panel}>
       <h3>{destination.label}</h3>
-      {findHubModule(destination.id) ? <ModuleOutputView key={destination.id} moduleId={destination.id as HubModuleId}/>
+      {(findHubModule(destination.id)?.view === 'preview' || destination.id === 'max-games' || destination.id === 'max-media') ? <ModuleOutputView key={destination.id} moduleId={destination.id as HubModuleId}/>
         : destination.id === 'max-chess' ? <Suspense fallback={<p>Opening free chess…</p>}><ChessArena /></Suspense>
         : destination.id === 'art-media-games-store' ? <><img src="/assets/crown-cover.png" alt="The Crown of Return gallery preview" style={{ maxWidth: '100%', width: 320 }} /><p>Free MAX-ART / MAX-MEDIA / MAX-GAMES gallery preview.</p><button style={{ ...control, opacity: optedInBaseUsdc ? 1 : 0.5 }} disabled={!optedInBaseUsdc} onClick={() => setNotice('Use the opt-in controls below to request a quote or verify an existing receipt. No order has been created.')}>Request storefront order</button></>
         : destination.id === 'max-sovereign-options' ? <><p>Free output preview: 0.000000 USDC. MAX Compute: 0.000000.</p><p>Extended outputs, stakes and P2P settlements require explicit consent. {PAYMENT_NOTE}</p></>
@@ -234,6 +238,16 @@ export const BeemaxSpaceConcierge: React.FC<BeemaxSpaceConciergeProps> = ({ opte
         mode={destination.id === 'sports-wager' ? 'wager' : destination.id === 'max-chess' ? 'p2p' : destination.id === 'art-media-games-store' ? 'storefront-order' : 'paid-tier'} />}
       {notice && <p role="status">{notice}</p>}
     </section>}
+    <h2>BEEMAX • MAX-SPACES Guided Navigator</h2>
+    <p>Output-Only Concierge • MAX Compute: <strong>0.000000</strong> • {optedInBaseUsdc ? 'Base (8453) USDC Opt-In Active' : 'Wallet-Free Preview Mode'}</p>
+    <p>Free previews and play within free limits. No automatic charges.</p>
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{Object.values(SPACE_ROUTES).filter(spec => !findHubModule(spec.id) || spec.id === 'max-chess').map(spec =>
+      <button style={{ ...control, borderColor: spec.id === selectedAction ? '#38bdf8' : '#475569' }} key={spec.id} type="button" aria-pressed={spec.id === selectedAction} onClick={() => setSelectedAction(spec.id)}>{spec.label}</button>)}</div>
+    <div style={panel}>
+      <h3>{active.label} ({active.domain})</h3><p>{active.guidance}</p><p>{active.freeAllowanceNote}</p>
+      <button style={{ ...control, opacity: blocked ? 0.5 : 1 }} type="button" disabled={blocked} onClick={navigate}>{blocked ? 'Opt In to Base (8453) USDC First to Continue' : `Continue to ${active.domain}`}</button>
+      {active.id === 'art-media-games-store' && <p><a href="#/spaces/storefront">Browse free gallery previews</a></p>}
+    </div>
   </section>;
 };
 export default BeemaxSpaceConcierge;

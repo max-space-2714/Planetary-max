@@ -6,7 +6,7 @@ export const LandingEntry: React.FC = () => {
   const [selectedTier, setSelectedTier] = useState<"free" | "base-usdc">("free");
 
   return (
-    <main
+    <section
       style={{
         background: "#070b14",
         color: "#e2e8f0",
@@ -122,7 +122,7 @@ export const LandingEntry: React.FC = () => {
         </section>
         <BeemaxSpaceConcierge optedInBaseUsdc={optedIn} />
       </div>
-    </main>
+    </section>
   );
 };
 
