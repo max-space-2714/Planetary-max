@@ -13,3 +13,5 @@
 
 .neon-button{background:#26331f;border:1px solid #566c44;color:#dcf4c6;text-decoration:none}.window-titlebar>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.window-titlebar button{margin-left:auto;flex:none}.floating-window{min-width:0}.webgl-fallback~.canvas-caption{display:none}@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;transition-duration:.01ms!important}}
 .immersive-stage>img{position:absolute;inset:0;z-index:1;background:#101510}
+
+@media (max-width: 700px) { .os-shell .mobile-nav { gap: 0; padding: 0; overflow-x: auto; } .os-shell .mobile-nav button { flex: 1 1 0; min-width: 0; } }

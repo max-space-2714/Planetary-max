@@ -1,6 +1,7 @@
 import React, { Suspense, useEffect, useState } from 'react';
 import { CollectorVault } from './modules/art/CollectorCheckout';
-import LandingEntry from './pages/LandingEntry';
+import PortalOS1Layout from './core/PortalOS1Layout';
+import MaxSportsUserHud from './modules/sports/MaxSportsUserHud';
 
 const CommandHud = React.lazy(() => import('./components/BeemaxPortalCommandHud'));
 const AdminConsole = React.lazy(() => import('./modules/admin/PortalOS1Console'));
@@ -47,9 +48,10 @@ export default function App() {
     return () => window.removeEventListener('hashchange', update);
   }, []);
   if (window.location.pathname.startsWith('/vault/')) return <CollectorVault />;
+  if (route === '/sports-outputs') return <MaxSportsUserHud />;
   if (route === '/hud' || route === '/portal-os1') return <PrivateCommandSession key={route} />;
   if (route === '/admin' || window.location.pathname.replace(/\/$/, '') === '/admin') {
     return <Suspense fallback={<p>Loading sign-in…</p>}><AdminConsole /></Suspense>;
   }
-  return <LandingEntry />;
+  return <PortalOS1Layout />;
 }

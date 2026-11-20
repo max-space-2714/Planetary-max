@@ -1,0 +1,103 @@
+/* The public BEEMAX space uses the same surfaces and type as the workspace shell. */
+.beemax-entry,
+.beemax-concierge {
+  --beemax-surface: #1b2119;
+  --beemax-raised: #222c20;
+  --beemax-border: #394335;
+  --beemax-text: #eeefe8;
+  --beemax-muted: #adb6a4;
+  --beemax-accent: #c7f477;
+  color: var(--beemax-text);
+  font-family: 'DM Sans', sans-serif;
+}
+.beemax-entry { width: 100%; min-width: 0; }
+.beemax-entry-inner { max-width: 1600px; margin: 0 auto; display: grid; gap: 20px; }
+.beemax-entry-card, .beemax-concierge {
+  min-width: 0;
+  background: var(--beemax-surface);
+  border: 1px solid var(--beemax-border);
+  border-radius: 12px;
+  padding: clamp(20px, 2.4vw, 32px);
+}
+.beemax-entry-card { background: linear-gradient(130deg, #252e22, #171e18); }
+.beemax-entry-header, .beemax-concierge-header, .beemax-detail-header {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+}
+.beemax-entry h1, .beemax-concierge h2, .beemax-concierge h3, .beemax-concierge h4 {
+  margin: 0; color: var(--beemax-text); font-family: 'Space Grotesk', sans-serif; letter-spacing: -.035em;
+}
+.beemax-entry h1 { margin-top: 10px; font-size: clamp(25px, 2.5vw, 36px); font-weight: 500; line-height: 1.12; }
+.beemax-concierge h2 { margin-top: 10px; font-size: clamp(22px, 2vw, 29px); font-weight: 500; line-height: 1.2; }
+.beemax-concierge h3 { font-size: 19px; font-weight: 500; line-height: 1.35; }
+.beemax-concierge h4 { font-size: 17px; font-weight: 500; }
+.beemax-eyebrow { display: block; color: #b9d98e; font-size: 10px; font-weight: 700; letter-spacing: .13em; }
+.beemax-metadata { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 21px; }
+.beemax-metadata span, .beemax-status, .beemax-domain {
+  display: inline-flex; align-items: center; min-height: 29px; padding: 5px 10px;
+  border: 1px solid #3c493b; border-radius: 6px; background: #1b231d;
+  color: #c1c9ba; font-size: 11px; line-height: 1.3;
+}
+.beemax-metadata strong { color: var(--beemax-accent); margin-left: 4px; }
+.beemax-status, .beemax-domain { color: #d4efb9; border-color: #526447; background: #25321f; }
+.beemax-opt-in, .beemax-primary-button, .beemax-secondary-button {
+  min-height: 42px; border: 1px solid #566c44; border-radius: 7px; padding: 10px 15px;
+  background: #26331f; color: #dcf4c6; font-size: 12px; font-weight: 700; line-height: 1.35;
+}
+.beemax-opt-in[aria-pressed='true'] { background: #344429; border-color: #b9d98e; }
+.beemax-primary-button { background: var(--beemax-accent); border-color: var(--beemax-accent); color: #182112; }
+.beemax-opt-in:hover:not(:disabled), .beemax-secondary-button:hover:not(:disabled) { background: #344429; border-color: #b9d98e; }
+.beemax-primary-button:hover:not(:disabled) { background: #d6f9a2; border-color: #d6f9a2; }
+.beemax-entry button:disabled, .beemax-concierge button:disabled { opacity: .72; cursor: not-allowed; }
+.beemax-entry :focus-visible, .beemax-concierge :focus-visible { outline: 2px solid #c7f36c; outline-offset: 3px; }
+.beemax-tier-heading { border-top: 1px solid #3c493b; margin-top: 24px; padding-top: 22px; }
+.beemax-tier-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.beemax-tier {
+  min-height: 62px; display: flex; align-items: center; gap: 12px; text-align: left;
+  background: #171e18; color: #d1d7ca; border: 1px solid #3c493b; border-radius: 8px;
+  padding: 14px 16px; font-size: 13px; font-weight: 600; line-height: 1.4;
+}
+.beemax-tier:hover:not(:disabled), .beemax-tier[aria-pressed='true'] { border-color: #b9d98e; background: #263122; color: #f3f4ed; }
+.beemax-tier-indicator { flex: 0 0 16px; width: 16px; height: 16px; border: 1px solid #818b7c; border-radius: 50%; }
+.beemax-tier[aria-pressed='true'] .beemax-tier-indicator { border: 5px solid #c7f477; background: #263122; }
+.beemax-tier-note { margin-top: 12px; color: #c1c9ba; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.beemax-concierge-header p, .beemax-concierge-note { color: var(--beemax-muted); font-size: 13px; line-height: 1.6; }
+.beemax-concierge-header p { margin: 8px 0 0; }
+.beemax-concierge-header strong { color: var(--beemax-accent); }
+.beemax-concierge-note { margin: 12px 0 0; }
+.beemax-action-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 22px; }
+.beemax-action {
+  min-height: 58px; text-align: left; padding: 13px 15px; border: 1px solid #3c493b; border-radius: 8px;
+  background: #171e18; color: #c1c9ba; font-size: 12px; font-weight: 600; line-height: 1.4;
+}
+.beemax-action:hover, .beemax-action[aria-pressed='true'] { background: #263122; border-color: #8eae6d; color: #f3f4ed; }
+.beemax-action[aria-pressed='true'] { box-shadow: inset 3px 0 #c7f477; }
+.beemax-action-detail, .beemax-destination, .beemax-settlement {
+  margin-top: 20px; padding: clamp(18px, 2vw, 24px); background: #171e18;
+  border: 1px solid #3c493b; border-radius: 10px; min-width: 0;
+}
+.beemax-guidance { margin: 15px 0 0; color: #d1d7ca; font-size: 13px; line-height: 1.65; }
+.beemax-allowance { margin: 8px 0 0; color: var(--beemax-muted); font-size: 12px; line-height: 1.65; }
+.beemax-detail-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 20px; }
+.beemax-concierge a { color: #d4efb9; overflow-wrap: anywhere; }
+.beemax-destination > p, .beemax-settlement > p { color: #c1c9ba; font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
+.beemax-destination > img { display: block; border-radius: 8px; margin-top: 16px; }
+.beemax-destination > form, .beemax-settlement fieldset { display: grid; gap: 10px; }
+.beemax-settlement { background: #1b2119; }
+.beemax-settlement fieldset { min-width: 0; margin: 16px 0 0; padding: 0; border: 0; }
+.beemax-destination > form label, .beemax-settlement label { display: grid; gap: 7px; color: #c1c9ba; font-size: 12px; line-height: 1.5; }
+.beemax-destination > form textarea, .beemax-settlement input {
+  width: 100%; min-width: 0; border: 1px solid #3c453b; border-radius: 8px; padding: 11px;
+  background: #10120f; color: #eeefe8;
+}
+.beemax-destination > form textarea { min-height: 110px; resize: vertical; }
+.beemax-destination > form button, .beemax-settlement button { justify-self: start; }
+.beemax-settlement pre { padding: 12px; background: #10120f; border: 1px solid #3c493b; border-radius: 8px; color: #c1c9ba; font-size: 12px; line-height: 1.5; }
+@media (max-width: 900px) { .beemax-action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) {
+  .beemax-entry-inner { gap: 14px; }
+  .beemax-entry-card, .beemax-concierge { padding: 18px; }
+  .beemax-entry-header, .beemax-concierge-header { gap: 14px; }
+  .beemax-tier-grid, .beemax-action-grid { grid-template-columns: 1fr; }
+  .beemax-action { min-height: 48px; }
+  .beemax-detail-actions .beemax-primary-button { width: 100%; }
+}

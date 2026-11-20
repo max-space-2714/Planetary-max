@@ -1,118 +1,63 @@
 import React, { useState } from "react";
 import BeemaxSpaceConcierge from "../components/BeemaxSpaceConcierge";
+import "../components/BeemaxSpaceConcierge.css";
 
 export const LandingEntry: React.FC = () => {
   const [optedIn, setOptedIn] = useState(false);
   const [selectedTier, setSelectedTier] = useState<"free" | "base-usdc">("free");
 
   return (
-    <main
-      style={{
-        background: "#070b14",
-        color: "#e2e8f0",
-        minHeight: "100vh",
-        padding: 20,
-        fontFamily: "system-ui, -apple-system, sans-serif",
-      }}
-    >
-      <div style={{ maxWidth: 840, margin: "0 auto" }}>
-        <section
-          aria-label="BEEMAX Public Entry"
-          style={{
-            background: "#0e1525",
-            border: "1px solid #1e293b",
-            borderRadius: 12,
-            padding: 18,
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              flexWrap: "wrap",
-              gap: 12,
-            }}
-          >
+    <div className="beemax-entry">
+      <div className="beemax-entry-inner">
+        <section aria-label="BEEMAX Public Entry" className="beemax-entry-card">
+          <div className="beemax-entry-header">
             <div>
-              <h1 style={{ margin: 0, fontSize: 20, color: "#f8fafc" }}>
-                BEEMAX • MAX-INTERNET Entry
-              </h1>
-              <p style={{ margin: "6px 0 0", fontSize: 12, color: "#94a3b8" }}>
-                MAX Compute: <strong style={{ color: "#22c55e" }}>0.000000</strong> • Base USDC
-                (8453) • Outputs Only • Zero-Write GET / • write_performed: false
-              </p>
+              <span className="beemax-eyebrow">BEEMAX / MAX-INTERNET</span>
+              <h1>BEEMAX • MAX-INTERNET Entry</h1>
             </div>
-
             <button
+              className="beemax-opt-in"
               type="button"
               aria-pressed={optedIn}
               onClick={() => { setOptedIn((prev) => !prev); setSelectedTier("free"); }}
-              style={{
-                background: optedIn ? "#0f291e" : "#111827",
-                color: optedIn ? "#4ade80" : "#e2e8f0",
-                border: `1px solid ${optedIn ? "#22c55e" : "#334155"}`,
-                borderRadius: 8,
-                padding: "8px 12px",
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
             >
               {optedIn ? "Opted In (Base 8453)" : "Opt In to BEEMAX (Base 8453)"}
             </button>
           </div>
 
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
+          <div className="beemax-metadata" aria-label="BEEMAX access status">
+            <span>MAX Compute: <strong>0.000000</strong></span>
+            <span>Base USDC (8453)</span>
+            <span>Outputs Only</span>
+            <span>Zero-Write GET /</span>
+            <span>write_performed: false</span>
+          </div>
+
+          <div className="beemax-tier-heading">
+            <span className="beemax-eyebrow">OUTPUT ACCESS</span>
+          </div>
+          <div className="beemax-tier-grid">
             <button
+              className="beemax-tier"
               type="button"
               aria-pressed={selectedTier === "free"}
               onClick={() => setSelectedTier("free")}
-              style={{
-                background: selectedTier === "free" ? "#0c2d48" : "#070b14",
-                color: selectedTier === "free" ? "#7dd3fc" : "#cbd5e1",
-                border: `1px solid ${selectedTier === "free" ? "#38bdf8" : "#1e293b"}`,
-                borderRadius: 8,
-                padding: "8px 12px",
-                fontSize: 12,
-                fontWeight: selectedTier === "free" ? 700 : 500,
-                cursor: "pointer",
-              }}
             >
-              Free Output Preview (0.000000 USDC)
+              <span className="beemax-tier-indicator" aria-hidden="true" />
+              <span>Free Output Preview (0.000000 USDC)</span>
             </button>
-
             <button
+              className="beemax-tier"
               type="button"
               aria-pressed={selectedTier === "base-usdc"}
               disabled={!optedIn}
               onClick={() => setSelectedTier("base-usdc")}
-              style={{
-                background: selectedTier === "base-usdc" ? "#0c2d48" : "#070b14",
-                color: selectedTier === "base-usdc" ? "#7dd3fc" : "#cbd5e1",
-                border: `1px solid ${selectedTier === "base-usdc" ? "#38bdf8" : "#1e293b"}`,
-                borderRadius: 8,
-                padding: "8px 12px",
-                fontSize: 12,
-                fontWeight: selectedTier === "base-usdc" ? 700 : 500,
-                cursor: "pointer",
-              }}
             >
-              Base USDC Output Tier (1.000000 USDC)
+              <span className="beemax-tier-indicator" aria-hidden="true" />
+              <span>Base USDC Output Tier (1.000000 USDC)</span>
             </button>
           </div>
-
-          <div
-            style={{
-              marginTop: 14,
-              background: "#070b14",
-              border: "1px solid #1e293b",
-              borderRadius: 8,
-              padding: 12,
-              fontSize: 12,
-              color: "#cbd5e1",
-            }}
-          >
+          <div className="beemax-tier-note">
             {selectedTier === "free"
               ? "Active: 0.000000 USDC free preview • Wallet-free browsing & pre-limit previews for MAX-ART, MAX-GAMES, MAX-CHESS, MAX-SPORTS, MAX-MEDIA & MAX-SPACES • MAX Compute: 0.000000"
               : optedIn
@@ -122,7 +67,7 @@ export const LandingEntry: React.FC = () => {
         </section>
         <BeemaxSpaceConcierge optedInBaseUsdc={optedIn} />
       </div>
-    </main>
+    </div>
   );
 };
 

@@ -1,4 +1,5 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react';
+import './BeemaxSpaceConcierge.css';
 import { BASE_CHAIN_ID, BASE_NATIVE_USDC, MAX_COMPUTE_VALUE, requestOptInUsdcQuote, verifyOptInUsdcSettlement, type OptInUsdcSettlementRequest } from '../lib/beemaxBaseVerifier';
 
 import { baseUsdcSettlementMessage } from '../shared/baseUsdcSettlementMessage';
@@ -50,8 +51,6 @@ interface BeemaxSpaceConciergeProps {
   optedInBaseUsdc: boolean;
   onNavigate?: (targetRoute: string, spec: SpaceRouteSpec) => void;
 }
-const panel: React.CSSProperties = { background: '#0e1525', border: '1px solid #334155', borderRadius: 10, padding: 16, marginTop: 16 };
-const control: React.CSSProperties = { background: '#132238', color: '#e2e8f0', border: '1px solid #475569', borderRadius: 8, padding: '8px 12px', cursor: 'pointer', fontSize: 12 };
 const readDestination = () => Object.values(SPACE_ROUTES).find(spec => spec.targetRoute === window.location.hash);
 
 function SettlementControls({ domain, mode }: {
@@ -95,25 +94,25 @@ function SettlementControls({ domain, mode }: {
       setBusy(false);
     }
   };
-  return <section aria-label="Opt-in Base USDC settlement" style={panel}>
+  return <section aria-label="Opt-in Base USDC settlement" className="beemax-settlement">
     <h4>Opt-in Base USDC • {mode}</h4>
     <p>{domain} • Base Mainnet ({BASE_CHAIN_ID}) • MAX Compute: {MAX_COMPUTE_VALUE}</p>
     <p style={{ overflowWrap: 'anywhere' }}>Native USDC: {BASE_NATIVE_USDC}</p>
     <p>Request a quote or check an existing receipt. These controls do not sign or send wallet transactions.</p>
     <form onSubmit={event => { event.preventDefault(); void submit(false); }}>
-      <fieldset disabled={busy} style={{ border: 0, padding: 0 }}>
+      <fieldset disabled={busy}>
         <label>USDC amount <input required inputMode="decimal" value={amount} onChange={event => { setAmount(event.target.value); setStatus(''); }} /></label>
-        <button style={control} type="submit">Request Base USDC quote</button>
+        <button className="beemax-secondary-button" type="submit">Request Base USDC quote</button>
       </fieldset>
     </form>
     <form onSubmit={event => { event.preventDefault(); void submit(true); }}>
-      <fieldset disabled={busy} style={{ border: 0, padding: 0, marginTop: 12 }}>
+      <fieldset disabled={busy}>
         <label>Existing transaction hash <input required value={txHash} onChange={event => { setTxHash(event.target.value); setStatus(''); }} /></label>
         <label>Payer wallet address <input required pattern="0x[a-fA-F0-9]{40}" value={payerAddress} onChange={event => { setPayerAddress(event.target.value); setSignature(''); setStatus(''); }} /></label>
         <p>Explicitly sign this message in your wallet only when ready:</p>
         <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{baseUsdcSettlementMessage(window.location.origin, { domain, mode, amountUsdc: /^(0|[1-9]\d*)(\.\d{1,6})?$/.test(amount) ? amount.split('.')[0] + '.' + (amount.split('.')[1] || '').padEnd(6, '0') : amount, txHash, payerAddress })}</pre>
         <label>Payer proof signature <input required pattern="0x[a-fA-F0-9]{130}" value={signature} onChange={event => setSignature(event.target.value)} /></label>
-        <button style={control} type="submit">Verify Base USDC receipt</button>
+        <button className="beemax-secondary-button" type="submit">Verify Base USDC receipt</button>
       </fieldset>
     </form>
     <p role="status" aria-live="polite">{busy ? 'Request in progress…' : status}</p>
@@ -137,26 +136,39 @@ export const BeemaxSpaceConcierge: React.FC<BeemaxSpaceConciergeProps> = ({ opte
     if (onNavigate) onNavigate(active.targetRoute, active);
     else window.location.hash = active.targetRoute;
   };
-  return <section aria-label="BEEMAX MAX-SPACES Concierge" style={{ ...panel, color: '#e2e8f0' }}>
-    <h2>BEEMAX • MAX-SPACES Guided Navigator</h2>
-    <p>Output-Only Concierge • MAX Compute: <strong>0.000000</strong> • {optedInBaseUsdc ? 'Base (8453) USDC Opt-In Active' : 'Wallet-Free Preview Mode'}</p>
-    <p>Free previews and play within free limits. No automatic charges.</p>
-    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{Object.values(SPACE_ROUTES).map(spec =>
-      <button style={{ ...control, borderColor: spec.id === selectedAction ? '#38bdf8' : '#475569' }} key={spec.id} type="button" aria-pressed={spec.id === selectedAction} onClick={() => setSelectedAction(spec.id)}>{spec.label}</button>)}</div>
-    <div style={panel}>
-      <h3>{active.label} ({active.domain})</h3><p>{active.guidance}</p><p>{active.freeAllowanceNote}</p>
-      <button style={{ ...control, opacity: blocked ? 0.5 : 1 }} type="button" disabled={blocked} onClick={navigate}>{blocked ? 'Opt In to Base (8453) USDC First to Continue' : `Continue to ${active.domain}`}</button>
-      {active.id === 'art-media-games-store' && <p><a href="#/spaces/storefront">Browse free gallery previews</a></p>}
+  return <section aria-label="BEEMAX MAX-SPACES Concierge" className="beemax-concierge">
+    <div className="beemax-concierge-header">
+      <div>
+        <span className="beemax-eyebrow">GUIDED NAVIGATION</span>
+        <h2>BEEMAX • MAX-SPACES Guided Navigator</h2>
+        <p>Output-Only Concierge • MAX Compute: <strong>0.000000</strong></p>
+      </div>
+      <span className="beemax-status">{optedInBaseUsdc ? 'Base (8453) USDC Opt-In Active' : 'Wallet-Free Preview Mode'}</span>
     </div>
-    {destination && <section aria-label="Selected MAX space" style={panel}>
+    <p className="beemax-concierge-note">Free previews and play within free limits. No automatic charges.</p>
+    <div className="beemax-action-grid">{Object.values(SPACE_ROUTES).map(spec =>
+      <button className="beemax-action" key={spec.id} type="button" aria-pressed={spec.id === selectedAction} onClick={() => setSelectedAction(spec.id)}>{spec.label}</button>)}</div>
+    <div className="beemax-action-detail">
+      <div className="beemax-detail-header">
+        <h3>{active.label} ({active.domain})</h3>
+        <span className="beemax-domain">{active.domain}</span>
+      </div>
+      <p className="beemax-guidance">{active.guidance}</p>
+      <p className="beemax-allowance">{active.freeAllowanceNote}</p>
+      <div className="beemax-detail-actions">
+        <button className="beemax-primary-button" type="button" disabled={blocked} onClick={navigate}>{blocked ? 'Opt In to Base (8453) USDC First to Continue' : `Continue to ${active.domain}`}</button>
+        {active.id === 'art-media-games-store' && <a href="#/spaces/storefront">Browse free gallery previews</a>}
+      </div>
+    </div>
+    {destination && <section aria-label="Selected MAX space" className="beemax-destination">
       <h3>{destination.label}</h3>
       {destination.id === 'max-chess' ? <Suspense fallback={<p>Opening free chess…</p>}><ChessArena /></Suspense>
-        : destination.id === 'art-media-games-store' ? <><img src="/assets/crown-cover.png" alt="The Crown of Return gallery preview" style={{ maxWidth: '100%', width: 320 }} /><p>Free MAX-ART / MAX-MEDIA / MAX-GAMES gallery preview.</p><button style={{ ...control, opacity: optedInBaseUsdc ? 1 : 0.5 }} disabled={!optedInBaseUsdc} onClick={() => setNotice('Use the opt-in controls below to request a quote or verify an existing receipt. No order has been created.')}>Request storefront order</button></>
+        : destination.id === 'art-media-games-store' ? <><img src="/assets/crown-cover.png" alt="The Crown of Return gallery preview" style={{ maxWidth: '100%', width: 320 }} /><p>Free MAX-ART / MAX-MEDIA / MAX-GAMES gallery preview.</p><button className="beemax-secondary-button" disabled={!optedInBaseUsdc} onClick={() => setNotice('Use the opt-in controls below to request a quote or verify an existing receipt. No order has been created.')}>Request storefront order</button></>
         : destination.id === 'max-sovereign-options' ? <><p>Free output preview: 0.000000 USDC. MAX Compute: 0.000000.</p><p>Extended outputs, stakes and P2P settlements require explicit consent. {PAYMENT_NOTE}</p></>
         : destination.id === 'sports-wager' ? <><p>{optedInBaseUsdc ? 'Opt-in recorded for this page session. You can request a stake quote or verify an existing receipt below; no wager has been placed.' : 'Opt in to Base (8453) USDC before placing a stake. Free sports previews remain available.'}</p><p>{PAYMENT_NOTE}</p><a href="#/spaces/max-sports?mode=prediction-output">Open free sports output preview</a></>
         : <><p>{destination.freeAllowanceNote}</p><form onSubmit={event => { event.preventDefault(); setNotice('Output delivery is currently unavailable. Your draft stays in this page; no request or payment was submitted.'); }}>
           <label> {destination.id === 'research-output' ? 'Research prompt' : 'Match / prediction question'}<textarea required maxLength={4000} value={request} onChange={event => setRequest(event.target.value)} /></label>
-          <button style={control} type="submit">Prepare free output request</button></form></>}
+          <button className="beemax-secondary-button" type="submit">Prepare free output request</button></form></>}
       {optedInBaseUsdc && <SettlementControls key={`${destination.id}:${destination.domain}`} domain={destination.domain}
         mode={destination.id === 'sports-wager' ? 'wager' : destination.id === 'max-chess' ? 'p2p' : destination.id === 'art-media-games-store' ? 'storefront-order' : 'paid-tier'} />}
       {notice && <p role="status">{notice}</p>}
